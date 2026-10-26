@@ -1,0 +1,12 @@
+# JGit / BouncyCastle / OkHttp 在 R8 下需要保留的成员
+-dontwarn org.eclipse.jgit.**
+-dontwarn com.jcraft.jsch.**
+-dontwarn org.slf4j.**
+-dontwarn javax.servlet.**
+-dontwarn org.mortbay.**
+-dontwarn org.bouncycastle.**
+-dontwarn kotlinx.serialization.**
+-keep class org.eclipse.jgit.** { *; }
+-keep class com.jcraft.jsch.** { *; }
+-keep class kotlinx.serialization.** { *; }
+-keepclassmembers class com.dishplanner.** { *; }

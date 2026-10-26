@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 13+ 主题图标（单色）。系统会把整张图染成一个颜色，
+  所以这里必须是纯剪影：不能带渐变、不能带 strokeAlpha —— 否则染完就是一团灰。
+  形状取「盘 + 盘中三样菜」的轮廓，缩到 48dp 也还认得出。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:scaleX="0.1211"
+        android:scaleY="0.1211"
+        android:translateX="23"
+        android:translateY="23">
+
+        <!-- 盘沿（外圈实心，靠内圈挖空形成环；用 evenOdd 的环形 path 更省事） -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M256,44A202,202 0 1,1 256,448A202,202 0 1,1 256,44ZM256,95A151,151 0 1,0 256,397A151,151 0 1,0 256,95Z" />
+
+        <!-- 盘中内容剪影：青菜 + 番茄 + 胡萝卜合成一块，避免细节在小尺寸下碎掉 -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M224,286C194,267 163,241 164,204C165,178 184,158 207,164C219,133 247,124 267,148C287,132 314,146 316,172C342,178 353,204 338,228C327,246 306,261 286,278L224,286Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M284,263C287,235 312,219 341,221C371,222 393,247 391,277C390,309 365,336 334,339C302,342 278,317 278,288C278,278 280,270 284,263Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M177,294C190,278 212,276 236,284L307,335C317,342 313,356 302,364C272,386 223,383 187,361C165,347 160,315 177,294Z" />
+    </group>
+</vector>

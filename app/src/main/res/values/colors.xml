@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 自适应图标底色：陶土暖棕，和默认「陶土橙」配色同源。
+         白瓷盘必须压在一个有分量的深色上，否则在浅色桌面上会糊成一片 -->
+    <color name="ic_launcher_background">#8E3F13</color>
+
+    <!-- 启动窗口底色 = 默认配色 light 的 background。
+         系统 splash（Android 12+）和 Compose 首帧都从这里取，暗色模式在 values-night 覆盖 -->
+    <color name="window_background">#FFF8F5</color>
+</resources>

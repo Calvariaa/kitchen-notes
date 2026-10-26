@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标前景：把品牌图形放进 108×108 视口的安全区。
+
+  安全区是中心 66dp 的圆（系统会裁成各种形状，圆/方/水滴都靠这一圈），
+  所以盘子的直径取 62dp，留 2dp 余量。scale = 62/512 ≈ 0.1211，
+  translate 把缩放后的 62dp 居中：(108 - 62) / 2 = 23。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:scaleX="0.1211"
+        android:scaleY="0.1211"
+        android:translateX="23"
+        android:translateY="23">
+
+        <!-- 盘底软阴影 -->
+        <path android:pathData="M76,267A190,194 0 1,1 456,267A190,194 0 1,1 76,267Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="266"
+                    android:centerY="267"
+                    android:gradientRadius="200"
+                    android:startColor="#2E25334A"
+                    android:endColor="#0025334A" />
+            </aapt:attr>
+        </path>
+
+        <!-- 瓷盘本体 -->
+        <path
+            android:pathData="M256,44A202,202 0 1,1 256,448A202,202 0 1,1 256,44Z"
+            android:strokeColor="#E2E7EF"
+            android:strokeWidth="3">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="112"
+                    android:startY="90"
+                    android:endX="390"
+                    android:endY="423"
+                    android:startColor="#FFFFFF"
+                    android:endColor="#F4F6FB" />
+            </aapt:attr>
+        </path>
+        <path android:pathData="M256,80A166,166 0 1,1 256,412A166,166 0 1,1 256,80Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="150"
+                    android:startY="125"
+                    android:endX="371"
+                    android:endY="385"
+                    android:startColor="#E8EDF5"
+                    android:centerColor="#FFFFFF"
+                    android:endColor="#DDE3ED" />
+            </aapt:attr>
+        </path>
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M256,95A151,151 0 1,1 256,397A151,151 0 1,1 256,95Z" />
+
+        <!-- 青菜 -->
+        <path android:pathData="M224,286C194,267 163,241 164,204C165,178 184,158 207,164C219,133 247,124 267,148C287,132 314,146 316,172C342,178 353,204 338,228C327,246 306,261 286,278L224,286Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="180"
+                    android:startY="145"
+                    android:endX="296"
+                    android:endY="296"
+                    android:startColor="#43B85A"
+                    android:endColor="#188A45" />
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M239,273C230,237 229,211 239,178M240,242L210,208M244,226L274,190M250,263L291,229"
+            android:strokeColor="#8BE17A"
+            android:strokeWidth="9"
+            android:strokeLineCap="round"
+            android:strokeAlpha="0.8" />
+        <path
+            android:fillColor="#249A4D"
+            android:pathData="M171,277C146,270 132,251 139,234C157,232 177,246 184,266Z" />
+        <path
+            android:fillColor="#2DA653"
+            android:pathData="M170,306C145,306 130,292 133,276C151,270 169,283 177,297Z" />
+
+        <!-- 番茄 -->
+        <path android:pathData="M284,263C287,235 312,219 341,221C371,222 393,247 391,277C390,309 365,336 334,339C302,342 278,317 278,288C278,278 280,270 284,263Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="305"
+                    android:startY="245"
+                    android:endX="378"
+                    android:endY="363"
+                    android:startColor="#FF604E"
+                    android:endColor="#E93225" />
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M336,231C326,239 320,248 318,259"
+            android:strokeColor="#FFAA9D"
+            android:strokeWidth="10"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#188A45"
+            android:pathData="M337,236C325,224 319,217 322,208C333,211 341,218 345,226C348,211 357,202 366,201C369,213 362,225 353,233C367,229 380,231 387,239C376,248 360,246 349,240C354,253 351,263 344,269C335,259 335,247 337,236Z" />
+
+        <!-- 胡萝卜 -->
+        <path android:pathData="M177,294C190,278 212,276 236,284L307,335C317,342 313,356 302,364C272,386 223,383 187,361C165,347 160,315 177,294Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="185"
+                    android:startY="302"
+                    android:endX="306"
+                    android:endY="390"
+                    android:startColor="#FF9F1C"
+                    android:endColor="#F47700" />
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M214,303L204,320M255,330L246,347"
+            android:strokeColor="#FFC15B"
+            android:strokeWidth="9"
+            android:strokeLineCap="round" />
+
+        <!-- 点缀香草 -->
+        <path
+            android:fillColor="#35A853"
+            android:pathData="M177,267C161,253 154,239 161,228C178,234 186,247 185,262Z" />
+        <path
+            android:fillColor="#35A853"
+            android:pathData="M179,291C164,283 157,271 162,261C176,265 184,276 184,287Z" />
+
+        <!-- 瓷面高光 -->
+        <path
+            android:pathData="M111,190C119,157 140,130 166,113"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="9"
+            android:strokeLineCap="round"
+            android:strokeAlpha="0.9" />
+    </group>
+</vector>
