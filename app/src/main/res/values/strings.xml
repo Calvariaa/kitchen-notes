@@ -1,4 +1,299 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  English is the default resource set: any locale we do not translate falls back to it.
+  Simplified Chinese lives in values-zh-rCN.
+
+  Naming: <screen>_<role>. Every user-visible string belongs here — no hardcoded text in
+  composables, because a hardcoded Chinese literal silently breaks the English build.
+-->
 <resources>
-    <string name="app_name">菜谱坊</string>
+
+    <string name="app_name">Kitchen Notes</string>
+    <string name="app_tagline">Family recipes</string>
+
+    <!-- ==================== common ==================== -->
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_done">Done</string>
+    <string name="action_show">Show</string>
+    <string name="action_hide">Hide</string>
+    <string name="action_remove">Remove</string>
+    <string name="untitled_dish">Untitled dish</string>
+
+    <!-- 列表分隔符：英文用逗号加空格，中文用全角逗号 -->
+    <string name="list_separator">, </string>
+
+    <!-- ==================== recipe list ==================== -->
+    <string name="list_role_host">Host · %1$s</string>
+    <string name="list_role_member">Joined %1$s</string>
+    <string name="list_sync">Sync</string>
+    <string name="list_settings">Settings</string>
+    <string name="list_new_recipe">New recipe</string>
+    <string name="list_search_placeholder">Search dishes, ingredients…</string>
+    <string name="list_search_clear">Clear search</string>
+    <string name="list_empty_title">No recipes yet</string>
+    <string name="list_empty_subtitle">Take a photo or paste some text — AI turns it into steps you can follow</string>
+
+    <string name="card_minutes">%1$d min</string>
+    <string name="card_steps">%1$d steps</string>
+    <string name="card_no_ingredients">No ingredients listed</string>
+    <string name="card_more_ingredients">%1$s +%2$d more</string>
+
+    <!-- ==================== onboarding ==================== -->
+    <string name="onboarding_intro">Snap a photo or paste some text and AI will organise it into a recipe you can actually cook from. Everyone on the same Wi-Fi syncs automatically.</string>
+    <string name="onboarding_name_question">First, what should we call you?</string>
+    <string name="onboarding_privacy_note">Both stay on this device and the family host — they only mark who added which dish.</string>
+    <string name="onboarding_label_name">Nickname</string>
+    <string name="onboarding_placeholder_name">e.g. Mum</string>
+    <string name="onboarding_label_email">Email (not verified, just an identifier)</string>
+    <string name="onboarding_placeholder_email">e.g. mum@home.local</string>
+    <string name="onboarding_start">Get started</string>
+    <string name="onboarding_generating_key">Creating your key…</string>
+    <string name="onboarding_key_note">On first launch a pair of SSH keys is generated on this device; it is your credential for joining the family group.</string>
+
+    <!-- ==================== create recipe ==================== -->
+    <string name="create_title">New recipe</string>
+    <string name="create_intro">Hand AI whatever you have: a photo of the dish, a delivery-app screenshot, someone else\'s write-up, even dictated text. Fill in whichever you have — photo and text are each optional.</string>
+    <string name="create_photos_title">Photos (up to 9)</string>
+    <string name="create_pick_gallery">From gallery</string>
+    <string name="create_take_photo">Take a photo</string>
+    <string name="create_cover_badge">Cover</string>
+    <string name="create_text_title">Text material</string>
+    <string name="create_text_placeholder">Paste the dish name, ingredients, steps, or any text you can see in a screenshot.\ne.g. Yuxiang shredded pork\npork loin 300g, wood ear, carrot, pickled chilli…\nmarinate the meat first, then stir-fry…</string>
+    <string name="create_label_title_hint">Dish name (optional)</string>
+    <string name="create_label_source">Source (optional)</string>
+    <string name="create_source_placeholder">Xiaohongshu</string>
+    <string name="create_generate">Generate recipe</string>
+    <string name="create_generating">Generating…</string>
+
+    <string-array name="create_source_presets">
+        <item>Xiaohongshu</item>
+        <item>Xiachufang</item>
+        <item>Douyin</item>
+        <item>Delivery app</item>
+        <item>Family notes</item>
+    </string-array>
+
+    <!-- ==================== draft review ==================== -->
+    <string name="draft_title">Review</string>
+    <string name="draft_discard">Discard</string>
+    <string name="draft_save">Save to recipes</string>
+    <string name="draft_label_title">Dish name</string>
+    <string name="draft_label_summary">Summary</string>
+    <string name="draft_label_serving">Servings</string>
+    <string name="draft_label_minutes">Total (min)</string>
+    <string name="draft_label_difficulty">Difficulty</string>
+    <string name="draft_ingredients_title">Ingredients (editable)</string>
+    <string name="draft_label_ingredient">Ingredient</string>
+    <string name="draft_label_amount">Amount</string>
+    <string name="draft_add_ingredient">+ Add ingredient</string>
+    <string name="draft_steps_title">Steps</string>
+    <string name="draft_step_header">Step %1$d</string>
+    <string name="draft_about_minutes">~%1$d min</string>
+    <string name="draft_refine_title">Not quite right? Ask AI to rewrite</string>
+    <string name="draft_refine_placeholder">e.g. make it mildly spicy; compress to 5 steps; write it for 4 servings</string>
+    <string name="draft_refine_action">Rewrite</string>
+    <string name="draft_ai_rewriting">AI is rewriting…</string>
+
+    <!-- ==================== recipe detail ==================== -->
+    <string name="detail_minutes">%1$d min</string>
+    <string name="detail_servings_default">Servings to taste</string>
+    <string name="detail_ingredients">Ingredients</string>
+    <string name="detail_items_count">%1$d items</string>
+    <string name="detail_no_ingredients">No ingredient details</string>
+    <string name="detail_steps">Method</string>
+    <string name="detail_tips">Tips</string>
+    <string name="detail_about_minutes">~%1$d min</string>
+    <string name="detail_meta_author">Compiled by %1$s</string>
+    <string name="detail_meta_source">from %1$s</string>
+
+    <string name="detail_delete_body">Delete “%1$s”? The recipe file goes away for everyone in the family group.</string>
+
+    <!-- ==================== settings ==================== -->
+    <string name="settings_title">Settings</string>
+
+    <string name="settings_section_ai">AI service</string>
+    <string name="settings_api_base_url">API base URL</string>
+    <string name="settings_api_key">API key</string>
+    <string name="settings_model">Model</string>
+    <string name="settings_send_images">Send photos to the model</string>
+    <string name="settings_send_images_sub">Off: generate from text only, photos stay display-only</string>
+    <string name="settings_thinking">Enable reasoning chain</string>
+    <string name="settings_thinking_sub">Slower and pricier, but complex dishes get clearer steps. Usually better off</string>
+    <string name="settings_max_images">Max photos per request</string>
+    <string name="settings_max_images_value">%1$d photos</string>
+    <string name="settings_image_edge">Downscale long edge to</string>
+    <string name="settings_image_edge_value">%1$d px</string>
+    <string name="settings_prompt_addon">Extra prompt (optional)</string>
+    <string name="settings_prompt_addon_placeholder">e.g. not spicy; we only have an air fryer; write it for 4 people</string>
+    <string name="settings_test_connection">Test connection</string>
+    <string name="settings_test_connecting">Connecting…</string>
+    <string name="settings_test_ok">Connected: %1$s</string>
+    <string name="settings_test_failed">Connection failed: %1$s</string>
+
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_palette">Colour scheme</string>
+    <string name="settings_dynamic_color">Follow system wallpaper colours</string>
+    <string name="settings_dynamic_color_sub">Android 12+. Overrides the scheme above when on</string>
+    <string name="settings_theme_mode">Light / dark</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system">System</string>
+    <string name="settings_language_zh">简体中文</string>
+    <string name="settings_language_en">English</string>
+
+    <string name="settings_section_sync">Family sync</string>
+    <string name="settings_sync_intro">On the same Wi-Fi, one device acts as host and everyone else joins. Recipes sync both ways automatically. Under the hood it is a real git repo: one file per dish, so who added what and when stays in the commit history.</string>
+    <string name="settings_host_running">You are the host (running)</string>
+    <string name="settings_host_stopped">You are the host (stopped)</string>
+    <string name="settings_host_addresses">Other devices find you at:</string>
+    <string name="settings_join_code">Join code: %1$s</string>
+    <string name="settings_restart_host">Restart service</string>
+    <string name="settings_dissolve_group">Dissolve group</string>
+    <string name="settings_joined_group">Joined “%1$s”</string>
+    <string name="settings_host_address">Host: %1$s</string>
+    <string name="settings_sync_now">Sync now</string>
+    <string name="settings_leave_group">Leave group</string>
+    <string name="settings_no_group">Not in a family group yet. You can host from this device, or scan for a host on your network.</string>
+    <string name="settings_become_host">Become host</string>
+    <string name="settings_join_group">Join a group</string>
+    <string name="settings_sync_on_launch">Pull on launch</string>
+    <string name="settings_push_after_edit">Push right after edits</string>
+
+    <string name="settings_section_identity">My identity</string>
+    <string name="settings_ssh_fingerprint">SSH public key fingerprint</string>
+    <string name="settings_copy_public_key">Copy public key</string>
+    <string name="settings_regenerate_key">Regenerate</string>
+
+    <string name="settings_section_data">Data</string>
+    <string name="settings_storage_summary">%1$d recipes · %2$s of images</string>
+    <string name="settings_storage_note">Recipes are stored here as JSON, images are named by content hash. This folder is itself a git repo — you can copy it straight out.</string>
+
+    <string name="settings_group_dialog_title">Family group</string>
+    <string name="settings_group_dialog_body">Host: keep every recipe on this device and serve it over the local network for your family.\nJoin: scan the same Wi-Fi for a device already hosting.</string>
+    <string name="settings_group_dialog_scan">Scan to join</string>
+    <string name="settings_host_name_title">Name your family group</string>
+    <string name="settings_host_name_body">This is the name your family sees when they scan.</string>
+    <string name="settings_host_name_label">Group name</string>
+    <string name="settings_host_name_start">Start hosting</string>
+    <string name="settings_default_group_name">My kitchen</string>
+
+    <!-- ==================== join group ==================== -->
+    <string name="join_title">Join a family group</string>
+    <string name="join_intro">Make sure both devices are on the same Wi-Fi. Tap the button below to scan — nearby hosts show up within seconds.</string>
+    <string name="join_scanning">Scanning the network…</string>
+    <string name="join_scan">Start scan</string>
+    <string name="join_rescan">Scan again</string>
+    <string name="join_probing">Probing 192.168.x.x …</string>
+    <string name="join_none_title">No host found yet</string>
+    <string name="join_none_hint">Check that the other device already tapped “Become host” in Settings → Family sync</string>
+    <string name="join_host_meta">%1$s · %2$s · %3$d people</string>
+    <string name="join_action">Join</string>
+    <string name="join_dialog_title">Join “%1$s”</string>
+    <string name="join_dialog_body">Ask the host for the join code — it is shown on their device under Settings → Family sync.</string>
+    <string name="join_code_label">Join code</string>
+
+    <!-- ==================== runtime status (ViewModel) ==================== -->
+    <string name="stage_prepare">Preparing your material…</string>
+    <string name="stage_compress">Compressing %1$d photos…</string>
+    <string name="stage_ask">Asking AI to organise the recipe…</string>
+    <string name="stage_parse">Parsing the result…</string>
+    <string name="stage_refine">Rewriting to your request…</string>
+    <string name="stage_failed">Generation failed</string>
+    <string name="stage_refine_failed">Rewrite failed</string>
+    <string name="stage_need_input">Give at least one photo or some text</string>
+
+    <string name="sync_host_starting">Starting the host service…</string>
+    <string name="sync_host_started">Host is running — devices on the same Wi-Fi can now find you</string>
+    <string name="sync_host_failed">Host did not start</string>
+    <string name="sync_host_stopped">Host stopped, group dissolved</string>
+    <string name="sync_joining">Joining “%1$s”…</string>
+    <string name="sync_joined">Joined “%1$s”, recipes pulled</string>
+    <string name="sync_join_failed">Could not join</string>
+    <string name="sync_left">Left the family group</string>
+    <string name="sync_in_progress">Syncing…</string>
+    <string name="sync_failed">Sync failed: %1$s</string>
+    <string name="sync_key_regenerated">Key regenerated — a newly joined group will register the new public key</string>
+    <string name="sync_no_identity">No identity yet</string>
+    <string name="sync_already_host">You are the host, data already lives here</string>
+    <string name="sync_committed_local">Local changes committed</string>
+
+    <string name="settings_storage_value">%1$d recipes · %2$s MB of images</string>
+    <string name="settings_theme_choice">%1$s</string>
+
+    <!-- ==================== sync results / errors ==================== -->
+    <string name="sync_part_pulled">pulled %1$d commits</string>
+    <string name="sync_part_conflicts">merged %1$d conflicts (kept the newer)</string>
+    <string name="sync_part_pushed">local changes pushed</string>
+    <string name="sync_part_up_to_date">already up to date</string>
+    <string name="sync_part_adopted_empty">joined “%1$s” (host has no recipes yet)</string>
+    <string name="sync_err_fetch">Pull failed: %1$s</string>
+    <string name="sync_err_push">Push failed: %1$s</string>
+    <string name="sync_err_no_group">Not in a family group yet</string>
+    <string name="sync_err_unreachable">Network unreachable</string>
+    <string name="sync_err_host_unreachable">Host unreachable</string>
+    <string name="sync_err_join_rejected">Could not join</string>
+    <string name="sync_err_bad_response">Host returned something unreadable</string>
+    <string name="sync_err_token">Join code does not match — rescan the host</string>
+    <string name="sync_err_missing_fields">Missing email or public key</string>
+    <string name="sync_err_port">Port %1$s is taken or refused by the system: %2$s</string>
+
+    <!-- ==================== AI errors ==================== -->
+    <string name="ai_err_missing_key">No API key yet — add one under Settings → AI service</string>
+    <string name="ai_err_http">API returned %1$d: %2$s</string>
+    <string name="ai_err_network">Cannot reach the API: %1$s</string>
+    <string name="ai_err_parse">Could not read the model output as a recipe: %1$s</string>
+    <string name="ai_err_empty">The model returned nothing. Try again, or switch models</string>
+
+    <string name="sync_err_host_not_running">Host service is not running</string>
+
+    <!-- ==================== palette ==================== -->
+    <string name="palette_terracotta">Terracotta</string>
+    <string name="palette_terracotta_desc">Default. Tomato and clay pot warmth</string>
+    <string name="palette_olive">Olive oil</string>
+    <string name="palette_olive_desc">Cold dishes and salads, clean and light</string>
+    <string name="palette_saffron">Saffron</string>
+    <string name="palette_saffron_desc">Curries and stews, deep spice</string>
+    <string name="palette_matcha">Matcha</string>
+    <string name="palette_matcha_desc">Desserts and tea, soft and cool</string>
+    <string name="palette_clay">Red clay</string>
+    <string name="palette_clay_desc">Braises and casseroles, the heaviest warmth</string>
+    <string name="palette_caramel">Caramel</string>
+    <string name="palette_caramel_desc">Baking and sweets, creamy finish</string>
+    <string name="palette_bamboo">Bamboo</string>
+    <string name="palette_bamboo_desc">Steamed dishes and soups, airy and plain</string>
+    <string name="palette_cocoa">Cocoa</string>
+    <string name="palette_cocoa_desc">Sauces and braises, deep and steady</string>
+
+
+    <!-- ==================== update ==================== -->
+    <string name="settings_section_update">App update</string>
+    <string name="settings_update_repo">Update source (owner/repo)</string>
+    <string name="settings_check_update_on_launch">Check for updates on launch</string>
+    <string name="settings_include_prerelease">Include pre-releases</string>
+    <string name="settings_check_update">Check for updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_current">Up to date (version %1$s)</string>
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update_release_date">Released %1$s</string>
+    <string name="update_download">Download &amp; install</string>
+    <string name="update_downloading">Downloading %1$d%%</string>
+    <string name="update_verifying">Verifying package…</string>
+    <string name="update_download_done">Downloaded, starting installer…</string>
+    <string name="update_install_blocked">Allow "install unknown apps" for Kitchen Notes to continue</string>
+    <string name="update_install_failed">Could not launch the installer</string>
+    <string name="update_err_network">Update check failed: no network (%1$s)</string>
+    <string name="update_err_http">Update check failed: HTTP %1$d %2$s</string>
+    <string name="update_err_parse">Update check failed: unexpected response (%1$s)</string>
+    <string name="update_err_checksum">Downloaded package is corrupt — checksum mismatch</string>
+    <string name="update_err_install">Install failed: %1$s</string>
+    <string name="update_section_notes">What changed</string>
+    <string name="update_dialog_title">New version available</string>
+    <string name="update_dialog_later">Later</string>
+    <string name="update_dialog_now">Update</string>
 </resources>

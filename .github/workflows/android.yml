@@ -1,0 +1,248 @@
+name: Android CI
+
+# 在 GitHub 的 Linux runner 上产出一个可安装的 release APK：
+#   - 版本号由 git tag 驱动（见 app/build.gradle.kts）：tag vX.Y.Z → versionName=X.Y.Z，
+#     versionCode 用日期式 yyyyMMdd（HEAD 提交日期），仓库里没有「版本号文件」要手动改
+#   - 文件名 = <applicationId>-<versionName>.apk
+#   - 校验值单独一个文件 <apk>.sha256（sha256sum 格式，`sha256sum -c` 可直接验）
+#   - release 构建没有 signingConfig，AGP 只吐 *-unsigned.apk，这里用 debug keystore 重签；
+#     keystore 走 actions/cache，跨 run 保持同一签名，产物之间可覆盖升级
+#   - 推 v* tag 时创建 Release：正文 = GitHub 自动生成的 notes + 按 conventional commit
+#     分组的提交清单（.github/scripts/changelog.py）
+# 发版只需：git tag v1.1.0 && git push --tags
+#
+# 本项目没有联网的单元测试，所以没有 run_tests 开关：
+# 装 APK 的人只需要一个能安装的包，CI 不跑 AGP 之外的检查。
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: '覆盖 versionName（留空则按 git tag 推导）'
+        type: string
+        default: ''
+      version_code:
+        description: '覆盖 versionCode（留空则用 HEAD 提交日期 yyyyMMdd，同日重发时用）'
+        type: string
+        default: ''
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: write # tag 推送时创建 Release
+
+env:
+  # 用 AGP 那份 debug keystore（~/.android/debug.keystore）给 release 包签名
+  KS_ALIAS: androiddebugkey
+  KS_PASS: android
+
+jobs:
+  build:
+    name: Build release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # fetch-depth: 0 是必需的 —— versionName 靠 `git describe --tags`，changelog 靠 tag 区间
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # 缓存 ~/.gradle（依赖 + wrapper + build cache），并给 Gradle 注入 CI 友好参数
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+
+      # app/build.gradle.kts 用 compileSdk = 37；装不上就让 AGP 自己补（licence 已接受）
+      - name: Install Android SDK platform / build-tools
+        run: |
+          yes | sdkmanager --install "platforms;android-37" "build-tools;37.0.0" >/dev/null || true
+          sdkmanager --list_installed | sed -n '1,40p'
+
+      # 缓存 debug keystore：同一个仓库的多次 run 用同一份签名，产物之间可以覆盖升级
+      - name: Restore CI debug keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: ci-debug-keystore-${{ github.repository }}
+
+      # 只构建 release，不会触发 AGP 自动生成 debug keystore，所以这里必须先备好
+      - name: Ensure debug keystore
+        run: |
+          set -euo pipefail
+          KS="$HOME/.android/debug.keystore"
+          if [ ! -f "$KS" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair -keystore "$KS" -storetype PKCS12 \
+              -storepass "$KS_PASS" -keypass "$KS_PASS" -alias "$KS_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10950 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          keytool -list -keystore "$KS" -storepass "$KS_PASS" | sed -n '1,10p'
+
+      # 版本号来自 git tag / 提交日期；这里把它落到 Step Summary，方便核对
+      - name: Log git version inputs
+        run: |
+          set -euo pipefail
+          echo "describe: $(git describe --tags --long --match 'v[0-9]*' 2>/dev/null || echo '<no tag>')"
+          echo "head date: $(git log -1 --format='%cd' --date=short)"
+          {
+            echo "### 版本信息"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| git describe | \`$(git describe --tags --long --match 'v[0-9]*' 2>/dev/null || echo 'no tag')\` |"
+            echo "| HEAD | \`$(git rev-parse --short=7 HEAD)\` |"
+            echo "| workflow 覆盖 | name=\`${{ inputs.version_name }}\` code=\`${{ inputs.version_code }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # git 里 gradlew 可能是 100644（Windows 检出的结果），Linux runner 必须先补执行位
+      - name: Build release APK
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ARGS=()
+          if [ -n "${{ inputs.version_name }}" ]; then ARGS+=("-Pkitchennotes.versionName=${{ inputs.version_name }}"); fi
+          if [ -n "${{ inputs.version_code }}" ]; then ARGS+=("-Pkitchennotes.versionCode=${{ inputs.version_code }}"); fi
+          ./gradlew --console=plain --stacktrace ${ARGS[@]+"${ARGS[@]}"} :app:assembleRelease
+
+      # 命名 + 签名 + 校验：文件名和版本号都从 AGP 的 output-metadata.json 里读，
+      # 不写死版本，也不改仓库里的任何文件
+      - name: Sign, name and checksum release APK
+        run: |
+          set -euo pipefail
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          META=app/build/outputs/apk/release/output-metadata.json
+          if [ ! -f "$META" ]; then
+            echo "::error::找不到 $META"; ls -R app/build/outputs; exit 1
+          fi
+
+          META_TSV="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));e=d["elements"][0];print(d["applicationId"],e["versionName"],e["versionCode"],e["outputFile"],sep="\t")' "$META")"
+          IFS=$'\t' read -r app_id vname vcode outfile <<< "$META_TSV"
+          echo "app=$app_id versionName=$vname versionCode=$vcode output=$outfile"
+          {
+            echo "VERSION_NAME=$vname"
+            echo "VERSION_CODE=$vcode"
+          } >> "$GITHUB_ENV"
+
+          apk="app/build/outputs/apk/release/$outfile"
+          if [ ! -f "$apk" ]; then
+            apk="$(ls app/build/outputs/apk/release/*-unsigned.apk app/build/outputs/apk/release/*.apk 2>/dev/null | head -1 || true)"
+          fi
+          if [ -z "$apk" ] || [ ! -f "$apk" ]; then
+            echo "::error::assembleRelease 没产出 APK"; ls -R app/build/outputs/apk; exit 1
+          fi
+          echo "unsigned: $apk"
+
+          name="${app_id}-${vname}.apk"
+          mkdir -p dist
+
+          "$BT/zipalign" -f -p 4 "$apk" "$RUNNER_TEMP/release-aligned.apk"
+          "$BT/apksigner" sign \
+            --ks "$HOME/.android/debug.keystore" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
+            --ks-key-alias "$KS_ALIAS" --min-sdk-version 26 \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --v4-signing-enabled false \
+            --out "dist/$name" "$RUNNER_TEMP/release-aligned.apk"
+          "$BT/apksigner" verify --print-certs --min-sdk-version 26 "dist/$name"
+
+          # 校验值单独成文件，格式与 sha256sum 输出一致 → 下载后 `sha256sum -c <文件>` 直接过
+          ( cd dist && sha256sum "$name" > "$name.sha256" )
+          cat "dist/$name.sha256"
+          ls -lh dist
+
+          {
+            echo ""
+            echo "### 产物"
+            echo ""
+            echo "| APK | versionName | versionCode | 大小 |"
+            echo "| --- | --- | --- | --- |"
+            echo "| \`$name\` | \`$vname\` | \`$vcode\` | $(du -h "dist/$name" | cut -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kitchennotes-release-${{ env.VERSION_NAME }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      # Release 正文先由 GitHub 自动生成（合并的 PR 列表 / Full Changelog / 新贡献者）
+      - name: Attach APK to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(env.VERSION_NAME, '-') }}
+
+      # 再追加一段按 conventional commit 分组的提交清单：直推 master 不带 PR 时，自动 notes
+      # 里只有 Full Changelog 链接，这一段才是真正能读的变更说明。
+      #
+      # 逻辑放在 .github/scripts/append_notes.py 而不是内联 heredoc —— YAML 块标量会把
+      # heredoc 的结束标记一起缩进，bash 认为 heredoc 没结束，把后面的行全吞进去，
+      # 最后在 EOF 处报 unexpected end of file。拆成文件后这坑直接消失，也好本地跑。
+      # 脚本对 403/404/5xx 退避重试，重试耗尽后退出非 0（不再用 ::warning:: 静默跳过），
+      # PATCH 之后还会回读校验，确保正文真的写进去了。
+      - name: Append commit changelog to release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # tag 触发的 checkout 是 detached HEAD，v1.0.1^ 指向上一版最后一个提交。
+          # git describe 在某些浅/异常检出下会返回空，这里多留一条退路：
+          # 直接按 tag 列表取上一个 v* 标签。
+          PREV="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${TAG_NAME}^" 2>/dev/null || true)"
+          if [ -z "$PREV" ]; then
+            PREV="$(git tag --list 'v[0-9]*' --sort=-v:refname \
+              | grep -vx "$TAG_NAME" | head -1 || true)"
+          fi
+          if [ -n "$PREV" ]; then RANGE="${PREV}..HEAD"; else RANGE="HEAD"; fi
+          echo "changelog range: $RANGE (prev=${PREV:-<none>})"
+          {
+            echo "### Release notes 追加"
+            echo ""
+            echo "- tag: \`$TAG_NAME\`"
+            echo "- range: \`$RANGE\` (prev=\`${PREV:-none}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          python3 .github/scripts/changelog.py --range "$RANGE" > "$RUNNER_TEMP/commits.md"
+          if [ ! -s "$RUNNER_TEMP/commits.md" ]; then
+            echo "没有可追加的提交清单，跳过"
+            echo "- 提交清单为空，未追加" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "--- 待追加内容 ---"
+          cat "$RUNNER_TEMP/commits.md"
+
+          python3 .github/scripts/append_notes.py \
+            --tag "$TAG_NAME" \
+            --commits "$RUNNER_TEMP/commits.md"

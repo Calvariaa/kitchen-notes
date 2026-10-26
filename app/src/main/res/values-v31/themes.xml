@@ -7,7 +7,7 @@
       紧接着 Compose 里的 SplashScreen 用同一个形状放大接管，视觉上是同一个东西在长大。
       文案由 Compose 那一层补 —— 系统开屏放不了字。
     -->
-    <style name="Theme.DishPlanner" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.KitchenNotes" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>

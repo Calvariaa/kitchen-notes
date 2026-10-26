@@ -4,16 +4,75 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// ── 版本号：tag 驱动（语义化）+ 日期式 versionCode ────────────────────────────
+// versionName（tag 形如 v1.4.0 / v2.0.0-rc.1）:
+//   HEAD 正好在 tag 上   → 1.4.0
+//   tag 之后有 N 个提交  → 1.4.1-dev.N+g<sha7>   （自动抬 patch，表示"下一个版本"）
+//   仓库还没有任何 tag   → 0.0.0-dev.N+g<sha7>
+// versionCode = HEAD 提交日期 yyyyMMdd（用提交自带的时区，跨机器可复现；
+//   同一天发两次需要显式覆盖）。当前日期在 2100000000 以内，不会撞 AGP 上限。
+// 覆盖（CI / 本地都可用）:
+//   -Pkitchennotes.versionName=1.4.0 -Pkitchennotes.versionCode=20261022
+fun gitOut(vararg args: String): String? = try {
+    val exec = providers.exec {
+        commandLine(listOf("git", "-C", rootDir.absolutePath) + args.toList())
+        isIgnoreExitValue = true
+    }
+    val text = exec.standardOutput.asText.get().trim()
+    if (exec.result.get().exitValue == 0 && text.isNotEmpty()) text else null
+} catch (_: Throwable) {
+    null // 不是 git 工作区（源码包 / 导出目录）时静默降级
+}
+
+val autoVersionCode: Int = run {
+    val stamp = gitOut("log", "-1", "--format=%cd", "--date=short") ?: ""
+    stamp.replace("-", "").toIntOrNull()?.takeIf { it > 0 } ?: 1
+}
+
+val autoVersionName: String = run {
+    val describe = gitOut("describe", "--tags", "--long", "--match", "v[0-9]*")
+    val m = describe?.let {
+        Regex("""^(?<tag>.+)-(?<ahead>\d+)-g(?<sha>[0-9a-f]{7,})$""").find(it)
+    }
+    if (m == null) {
+        val n = gitOut("rev-list", "--count", "HEAD") ?: "0"
+        val sha = gitOut("rev-parse", "--short=7", "HEAD") ?: "nogit"
+        "0.0.0-dev.$n+g$sha"
+    } else {
+        val tag = m.groups["tag"]!!.value.removePrefix("v")
+        val ahead = m.groups["ahead"]!!.value.toIntOrNull() ?: 0
+        val sha = m.groups["sha"]!!.value
+        if (ahead == 0) {
+            tag
+        } else {
+            val next = Regex("""^(\d+)\.(\d+)\.(\d+)$""").find(tag)?.let { base ->
+                val (major, minor, patch) = base.destructured
+                "$major.$minor.${patch.toInt() + 1}"
+            } ?: tag
+            "$next-dev.$ahead+g$sha"
+        }
+    }
+}
+
+val appVersionName: String =
+    providers.gradleProperty("kitchennotes.versionName").getOrElse(autoVersionName)
+val appVersionCode: Int =
+    providers.gradleProperty("kitchennotes.versionCode").getOrElse(autoVersionCode.toString())
+        .toIntOrNull() ?: autoVersionCode
+
 android {
-    namespace = "com.dishplanner"
+    namespace = "io.github.Calvariaa.kitchennotes"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.dishplanner"
+        applicationId = "io.github.Calvariaa.kitchennotes"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+
+        // 资源里只有 en / zh-rCN 两套，明确声明，让 AGP 不要为缺省语言发警告
+        resourceConfigurations += listOf("en", "zh-rCN")
     }
 
     buildTypes {
@@ -23,7 +82,9 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            // 故意不配 signingConfig：AGP 只产出 *-unsigned.apk，
+            // 由 CI（.github/workflows/android.yml）用固定的 debug keystore 重签。
+            // 这样签名密钥不在仓库里，也保证多次 CI 产物之间可以覆盖升级。
         }
     }
 

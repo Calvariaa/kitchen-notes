@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  简体中文。与 values/strings.xml 一一对应 —— 增删条目时两边必须同步，
+  少一条会静默回落到英文（不会编译报错），所以靠 AGP 的 missing translation 检查盯住。
+-->
+<resources>
+
+    <string name="app_name">厨房笔记</string>
+    <string name="app_tagline">家庭菜谱</string>
+
+    <!-- ==================== common ==================== -->
+    <string name="action_back">返回</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_copy">复制</string>
+    <string name="action_edit">编辑</string>
+    <string name="action_done">完成</string>
+    <string name="action_show">显示</string>
+    <string name="action_hide">隐藏</string>
+    <string name="action_remove">移除</string>
+    <string name="untitled_dish">未命名菜品</string>
+
+    <!-- 列表分隔符：英文用逗号加空格，中文用全角逗号 -->
+    <string name="list_separator">，</string>
+
+    <!-- ==================== recipe list ==================== -->
+    <string name="list_role_host">主机 · %1$s</string>
+    <string name="list_role_member">已加入 %1$s</string>
+    <string name="list_sync">同步</string>
+    <string name="list_settings">设置</string>
+    <string name="list_new_recipe">新菜谱</string>
+    <string name="list_search_placeholder">找菜名、材料…</string>
+    <string name="list_search_clear">清空</string>
+    <string name="list_empty_title">还没有菜谱</string>
+    <string name="list_empty_subtitle">拍一张照片或贴一段文字，AI 帮你整理成完整做法</string>
+
+    <string name="card_minutes">%1$d 分钟</string>
+    <string name="card_steps">%1$d 步</string>
+    <string name="card_no_ingredients">暂无材料</string>
+    <string name="card_more_ingredients">%1$s 等 %2$d 种</string>
+
+    <!-- ==================== onboarding ==================== -->
+    <string name="onboarding_intro">拍张照、贴段文字，AI 帮你整理成能照着做的菜谱；同一 WiFi 下的家人自动同步。</string>
+    <string name="onboarding_name_question">先给自己起个名字</string>
+    <string name="onboarding_privacy_note">这两个信息只会存在本机和家庭组主机上，用来区分是谁加的菜。</string>
+    <string name="onboarding_label_name">昵称</string>
+    <string name="onboarding_placeholder_name">例如：妈妈</string>
+    <string name="onboarding_label_email">邮箱（不验证，仅作身份标识）</string>
+    <string name="onboarding_placeholder_email">例如：mom@home.local</string>
+    <string name="onboarding_start">开始使用</string>
+    <string name="onboarding_generating_key">正在生成本机密钥…</string>
+    <string name="onboarding_key_note">首次启动会在本机生成一对 SSH 密钥，作为你加入家庭组的身份凭证。</string>
+
+    <!-- ==================== create recipe ==================== -->
+    <string name="create_title">新菜谱</string>
+    <string name="create_intro">把零散素材交给 AI：菜品照片、外卖截图、别处的做法、甚至语音转出来的文字都行。哪些有就填哪些，照片和文字都可以留空其中之一。</string>
+    <string name="create_photos_title">照片（可多张，最多 9 张）</string>
+    <string name="create_pick_gallery">从相册选</string>
+    <string name="create_take_photo">拍一张</string>
+    <string name="create_cover_badge">封面</string>
+    <string name="create_text_title">文字素材</string>
+    <string name="create_text_placeholder">把菜名、材料、步骤、或者是截图里看到的文字贴进来。\n例：鱼香肉丝\n猪里脊 300g 木耳 胡萝卜 泡椒…\n先腌肉再炒…</string>
+    <string name="create_label_title_hint">菜名（可选）</string>
+    <string name="create_label_source">来源（可选）</string>
+    <string name="create_source_placeholder">小红书</string>
+    <string name="create_generate">生成菜谱</string>
+    <string name="create_generating">生成中…</string>
+
+    <string-array name="create_source_presets">
+        <item>小红书</item>
+        <item>下厨房</item>
+        <item>抖音</item>
+        <item>外卖</item>
+        <item>家人手写</item>
+    </string-array>
+
+    <!-- ==================== draft review ==================== -->
+    <string name="draft_title">检查一下</string>
+    <string name="draft_discard">放弃</string>
+    <string name="draft_save">保存到菜谱</string>
+    <string name="draft_label_title">菜名</string>
+    <string name="draft_label_summary">简介</string>
+    <string name="draft_label_serving">份量</string>
+    <string name="draft_label_minutes">总耗时(分)</string>
+    <string name="draft_label_difficulty">难度</string>
+    <string name="draft_ingredients_title">材料（可直接改）</string>
+    <string name="draft_label_ingredient">材料</string>
+    <string name="draft_label_amount">用量</string>
+    <string name="draft_add_ingredient">+ 加一项材料</string>
+    <string name="draft_steps_title">步骤</string>
+    <string name="draft_step_header">第 %1$d 步</string>
+    <string name="draft_about_minutes">约 %1$d 分钟</string>
+    <string name="draft_refine_title">不满意？让 AI 重写</string>
+    <string name="draft_refine_placeholder">例如：改成微辣；步骤压缩到 5 步；份量按 4 人写</string>
+    <string name="draft_refine_action">重写</string>
+    <string name="draft_ai_rewriting">AI 正在重写…</string>
+
+    <!-- ==================== recipe detail ==================== -->
+    <string name="detail_minutes">%1$d 分钟</string>
+    <string name="detail_servings_default">份量自定</string>
+    <string name="detail_ingredients">材料</string>
+    <string name="detail_items_count">%1$d 项</string>
+    <string name="detail_no_ingredients">没有材料信息</string>
+    <string name="detail_steps">做法</string>
+    <string name="detail_tips">小贴士</string>
+    <string name="detail_about_minutes">约 %1$d 分钟</string>
+    <string name="detail_meta_author">由 %1$s 整理</string>
+    <string name="detail_meta_source">来源 %1$s</string>
+
+    <string name="detail_delete_body">删除「%1$s」？菜谱文件会从家庭组里一起消失。</string>
+
+    <!-- ==================== settings ==================== -->
+    <string name="settings_title">设置</string>
+
+    <string name="settings_section_ai">AI 服务</string>
+    <string name="settings_api_base_url">API 链接</string>
+    <string name="settings_api_key">API Key</string>
+    <string name="settings_model">模型</string>
+    <string name="settings_send_images">把照片发给模型识别</string>
+    <string name="settings_send_images_sub">关闭后只用文字素材生成，图片仅作展示</string>
+    <string name="settings_thinking">启用思维链</string>
+    <string name="settings_thinking_sub">更慢更贵，但复杂菜式的步骤会更讲得通；一般建议关闭</string>
+    <string name="settings_max_images">每次最多发送图片</string>
+    <string name="settings_max_images_value">%1$d 张</string>
+    <string name="settings_image_edge">图片长边压缩到</string>
+    <string name="settings_image_edge_value">%1$d 像素</string>
+    <string name="settings_prompt_addon">追加提示词（可选）</string>
+    <string name="settings_prompt_addon_placeholder">例如：不要辣；家里只有空气炸锅；份量按 4 人写</string>
+    <string name="settings_test_connection">测试连接</string>
+    <string name="settings_test_connecting">正在连接…</string>
+    <string name="settings_test_ok">连接成功：%1$s</string>
+    <string name="settings_test_failed">连接失败：%1$s</string>
+
+    <string name="settings_section_appearance">外观</string>
+    <string name="settings_palette">配色</string>
+    <string name="settings_dynamic_color">跟随系统壁纸动态取色</string>
+    <string name="settings_dynamic_color_sub">Android 12+ 可用；开启后忽略上面的配色</string>
+    <string name="settings_theme_mode">明暗</string>
+    <string name="settings_theme_system">跟随系统</string>
+    <string name="settings_theme_light">浅色</string>
+    <string name="settings_theme_dark">深色</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_language_system">跟随系统</string>
+    <string name="settings_language_zh">简体中文</string>
+    <string name="settings_language_en">English</string>
+
+    <string name="settings_section_sync">家庭组同步</string>
+    <string name="settings_sync_intro">同一 WiFi 下，一台设备当主机，其他设备加入后菜谱会自动双向同步。底层是真的 git 仓库：一道菜一个文件，谁加的、什么时候改的都留在提交记录里。</string>
+    <string name="settings_host_running">你在当主机（运行中）</string>
+    <string name="settings_host_stopped">你在当主机（已停止）</string>
+    <string name="settings_host_addresses">其他设备扫到你的地址：</string>
+    <string name="settings_join_code">加入码：%1$s</string>
+    <string name="settings_restart_host">重启服务</string>
+    <string name="settings_dissolve_group">解散家庭组</string>
+    <string name="settings_joined_group">已加入「%1$s」</string>
+    <string name="settings_host_address">主机：%1$s</string>
+    <string name="settings_sync_now">立即同步</string>
+    <string name="settings_leave_group">退出家庭组</string>
+    <string name="settings_no_group">还没加入家庭组。你可以自己当主机，或者扫一下局域网里的主机。</string>
+    <string name="settings_become_host">当主机</string>
+    <string name="settings_join_group">加入家庭组</string>
+    <string name="settings_sync_on_launch">启动时自动拉取</string>
+    <string name="settings_push_after_edit">改完立即推送</string>
+
+    <string name="settings_section_identity">我的身份</string>
+    <string name="settings_ssh_fingerprint">SSH 公钥指纹</string>
+    <string name="settings_copy_public_key">复制公钥</string>
+    <string name="settings_regenerate_key">重新生成</string>
+
+    <string name="settings_section_data">数据</string>
+    <string name="settings_storage_summary">%1$d 道菜谱 · 图片 %2$s</string>
+    <string name="settings_storage_note">菜谱以 JSON 存在这里，图片按内容散列命名；这个目录本身就是一个 git 仓库，可以直接拷走。</string>
+
+    <string name="settings_group_dialog_title">家庭组</string>
+    <string name="settings_group_dialog_body">当主机：本机保存所有菜谱，并开一个局域网服务让家人连进来。\n加入：扫描同一个 WiFi 下已经开好主机的设备。</string>
+    <string name="settings_group_dialog_scan">去扫描加入</string>
+    <string name="settings_host_name_title">给家庭组起个名</string>
+    <string name="settings_host_name_body">家人扫描时看到的就是这个名字。</string>
+    <string name="settings_host_name_label">家庭组名称</string>
+    <string name="settings_host_name_start">开始当主机</string>
+    <string name="settings_default_group_name">我家厨房</string>
+
+    <!-- ==================== join group ==================== -->
+    <string name="join_title">加入家庭组</string>
+    <string name="join_intro">确保两台设备连的是同一个 WiFi。点下面的按钮扫描，几秒内就能看到附近的主机。</string>
+    <string name="join_scanning">正在扫描局域网…</string>
+    <string name="join_scan">开始扫描</string>
+    <string name="join_rescan">重新扫描</string>
+    <string name="join_probing">逐个探测 192.168.x.x …</string>
+    <string name="join_none_title">还没扫描到主机</string>
+    <string name="join_none_hint">确认另一台设备已经在「设置 → 家庭组」里点了「当主机」</string>
+    <string name="join_host_meta">%1$s · %2$s · %3$d 人</string>
+    <string name="join_action">加入</string>
+    <string name="join_dialog_title">加入「%1$s」</string>
+    <string name="join_dialog_body">向主机要一下加入码（在对方设备的「设置 → 家庭组」里能看到）。</string>
+    <string name="join_code_label">加入码</string>
+
+    <!-- ==================== 运行时状态（ViewModel） ==================== -->
+    <string name="stage_prepare">正在整理素材…</string>
+    <string name="stage_compress">正在压缩图片（%1$d 张）…</string>
+    <string name="stage_ask">正在让 AI 整理菜谱…</string>
+    <string name="stage_parse">正在解析结果…</string>
+    <string name="stage_refine">正在按你的要求重写…</string>
+    <string name="stage_failed">生成失败</string>
+    <string name="stage_refine_failed">改写失败</string>
+    <string name="stage_need_input">至少给一张图，或者一段文字</string>
+
+    <string name="sync_host_starting">正在启动主机服务…</string>
+    <string name="sync_host_started">主机已启动，同一个 WiFi 下的设备就能扫到你</string>
+    <string name="sync_host_failed">主机启动失败</string>
+    <string name="sync_host_stopped">已关闭主机，家庭组解散</string>
+    <string name="sync_joining">正在加入「%1$s」…</string>
+    <string name="sync_joined">已加入「%1$s」，菜谱已拉取</string>
+    <string name="sync_join_failed">加入失败</string>
+    <string name="sync_left">已退出家庭组</string>
+    <string name="sync_in_progress">同步中…</string>
+    <string name="sync_failed">同步失败：%1$s</string>
+    <string name="sync_key_regenerated">密钥已重新生成，加入新家庭组时会用新公钥登记</string>
+    <string name="sync_no_identity">还没设置身份</string>
+    <string name="sync_already_host">已是家庭组主机，数据就在本机</string>
+    <string name="sync_committed_local">已提交本地改动</string>
+
+    <string name="settings_storage_value">%1$d 道菜谱 · 图片 %2$s MB</string>
+    <string name="settings_theme_choice">%1$s</string>
+
+    <!-- ==================== 同步结果 / 错误 ==================== -->
+    <string name="sync_part_pulled">拉取 %1$d 个提交</string>
+    <string name="sync_part_conflicts">合并 %1$d 条冲突（保留较新）</string>
+    <string name="sync_part_pushed">已推送本地改动</string>
+    <string name="sync_part_up_to_date">已是最新</string>
+    <string name="sync_part_adopted_empty">已接入「%1$s」（主机暂无菜谱）</string>
+    <string name="sync_err_fetch">拉取失败：%1$s</string>
+    <string name="sync_err_push">推送失败：%1$s</string>
+    <string name="sync_err_no_group">还没加入家庭组</string>
+    <string name="sync_err_unreachable">网络不可达</string>
+    <string name="sync_err_host_unreachable">主机不可达</string>
+    <string name="sync_err_join_rejected">加入失败</string>
+    <string name="sync_err_bad_response">主机返回内容无法解析</string>
+    <string name="sync_err_token">令牌不对，重新扫一下主机的加入码</string>
+    <string name="sync_err_missing_fields">缺少 email 或公钥</string>
+    <string name="sync_err_port">端口 %1$s 被占用或被系统拒绝：%2$s</string>
+
+    <!-- ==================== AI 错误 ==================== -->
+    <string name="ai_err_missing_key">还没填 API Key，去「设置 → AI 服务」里填一个</string>
+    <string name="ai_err_http">接口返回 %1$d：%2$s</string>
+    <string name="ai_err_network">连不上接口：%1$s</string>
+    <string name="ai_err_parse">模型输出没法解析成菜谱：%1$s</string>
+    <string name="ai_err_empty">模型什么都没返回，重试一次或者换个模型</string>
+
+    <string name="sync_err_host_not_running">主机服务没启动</string>
+
+    <!-- ==================== palette ==================== -->
+    <string name="palette_terracotta">陶土橙</string>
+    <string name="palette_terracotta_desc">默认。番茄与砂锅的暖色</string>
+    <string name="palette_olive">橄榄油</string>
+    <string name="palette_olive_desc">冷菜与沙拉，清淡干净</string>
+    <string name="palette_saffron">藏红花</string>
+    <string name="palette_saffron_desc">咖喱与炖菜，浓郁香料感</string>
+    <string name="palette_matcha">抹茶</string>
+    <string name="palette_matcha_desc">甜品与茶点，柔和偏冷</string>
+    <string name="palette_clay">赤陶</string>
+    <string name="palette_clay_desc">红烧与砂锅，最重的暖色</string>
+    <string name="palette_caramel">焦糖</string>
+    <string name="palette_caramel_desc">烘焙与甜点，奶油质感</string>
+    <string name="palette_bamboo">竹青</string>
+    <string name="palette_bamboo_desc">清蒸与汤品，素雅通透</string>
+    <string name="palette_cocoa">可可</string>
+    <string name="palette_cocoa_desc">酱汁与卤味，深色沉稳</string>
+
+
+    <!-- ==================== 更新 ==================== -->
+    <string name="settings_section_update">应用更新</string>
+    <string name="settings_update_repo">更新来源（owner/repo）</string>
+    <string name="settings_check_update_on_launch">启动时检查更新</string>
+    <string name="settings_include_prerelease">包含预发布版</string>
+    <string name="settings_check_update">检查更新</string>
+    <string name="update_checking">正在检查更新…</string>
+    <string name="update_current">已是最新版本（%1$s）</string>
+    <string name="update_available">有新版本 %1$s 可用</string>
+    <string name="update_release_date">发布于 %1$s</string>
+    <string name="update_download">下载并安装</string>
+    <string name="update_downloading">正在下载 %1$d%%</string>
+    <string name="update_verifying">正在校验安装包…</string>
+    <string name="update_download_done">下载完成，正在拉起安装…</string>
+    <string name="update_install_blocked">请允许「安装未知应用」后继续</string>
+    <string name="update_install_failed">无法拉起安装程序</string>
+    <string name="update_err_network">检查失败：网络不可用（%1$s）</string>
+    <string name="update_err_http">检查失败：HTTP %1$d %2$s</string>
+    <string name="update_err_parse">检查失败：返回内容异常（%1$s）</string>
+    <string name="update_err_checksum">安装包校验不一致，已删除，请重试</string>
+    <string name="update_err_install">安装失败：%1$s</string>
+    <string name="update_section_notes">更新内容</string>
+    <string name="update_dialog_title">发现新版本</string>
+    <string name="update_dialog_later">稍后</string>
+    <string name="update_dialog_now">去更新</string>
+</resources>
