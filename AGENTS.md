@@ -102,8 +102,25 @@ filesDir/store/
 - 成员：`fetch → 本地 commit → merge（冲突按 updatedAt 取新） → push`。
 - 主机自己编辑时：commit 后 `pushWorkspaceToBare`；成员 push 后 JGit 的 `postReceive` 钩子后台 `pullBareIntoWorkspace`。
 - **主机和成员走两条不同代码路径**：主机不能走 `SyncClient.sync` 的网络分支，会自己连自己把仓库锁死。
-- 菜谱（`dishes/`）和菜单（`menus/`）在同一个 git 工作区里，一次 `commitAll` 同时提交两边 ——
-  不需要为菜单另加同步逻辑，它天然跟着现有链路走。
+- 菜谱（`dishes/`）和菜单（`menus/`）在同一个 git 工作区里，一次 `commitAll` 同时提交两边。
+  但**每个改动点都必须显式调 `commitAndPush`**——新建/编辑/删除已有，菜单侧
+  `createMenu` / `toggleMenuRecipe` / `setMenuSlot` / `setMenuDate` /
+  `toggleMenuStaple` / `setMenuNote` 也都接了；漏掉任何一个，那类改动就只落在
+  本地磁盘、不会进 git，直到下一次全量 `commitAll`（定时同步）才补上。
+- **定时同步**：`ViewModel.restartAutoSync()` 按 `autoSyncMinutes` 起轮询协程，
+  成员/主机都走 `runSync(silent=true)`；静默时只在拉到新数据或发生仲裁才弹提示，
+  网络错误完全静默。`updateSettings` 改同步相关设置时会重建这个协程。
+  没加家庭组时协程不起，省电。
+- **主机 UI 自动刷新**：成员 push → `postReceive` 钩子后台 `pullBareIntoWorkspace` →
+  `GitServerHost.onRemoteChange` 回调（由 `DishViewModel.server()` 注入）→
+  `reload()`。主机用户在家人改完的瞬间就能看到新数据，不用等下次手动同步。
+- **冲突仲裁覆盖两边**：`resolveConflictsKeepingNewest()` 同时扫 `dishes/` 和
+  `menus/`（泛化成 `resolveDir(dir, serializer)`）。只扫 dishes 的话，
+  两边同时改同一餐会让菜单 JSON 带冲突标记，反序列化失败被 `runCatching` 吞掉，
+  表现为「菜单凭空消失」。
+- 启动自动同步：`boot()` 里 HOST 先把服务拉起来 + 主动 `hostSync` 一次
+  （不只是 startHost，否则成员上次推的数据要等第一次轮询才进来），
+  MEMBER 走 `syncOnLaunch`。
 
 ## i18n
 
@@ -237,6 +254,14 @@ filesDir/store/
     另外 `LocalContext.current` 必须直接在组合上下文中读，
     写成 `remember { Paths.repo(LocalContext.current.applicationContext) }`
     会编译失败：`@Composable invocations can only happen from ...`。
+
+24. **同步链路里「漏一个入口」是静默数据丢失**。`commitAll` 虽整仓提交，
+    但每个用户动作必须显式调 `commitAndPush` 才进 git；只 `upsert` 到磁盘的
+    改动要等下一次全量 `commitAll`（定时同步）才补上。
+    反例教训：`createMenu` 曾漏掉提交 → 新建菜单在另一台设备上凭空消失。
+    排查「为什么没同步上」先 grep 该动作有没有走 `commitAndPush`。
+    同理，同步侧加新目录（不只是 `dishes/`）时，冲突仲裁、UI 刷新回调都要跟上，
+    否则会出现「部分文件带着冲突标记被解析失败吞掉」的假丢数据。
 
 ## 权限
 
