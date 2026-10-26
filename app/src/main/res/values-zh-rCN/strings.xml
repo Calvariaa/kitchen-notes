@@ -160,6 +160,8 @@
     <string name="settings_join_group">加入家庭组</string>
     <string name="settings_sync_on_launch">启动时自动拉取</string>
     <string name="settings_push_after_edit">改完立即推送</string>
+    <string name="settings_auto_sync">每 5 分钟自动同步</string>
+    <string name="settings_auto_sync_desc">家人修改后也会跟着同步</string>
 
     <string name="settings_section_identity">我的身份</string>
     <string name="settings_ssh_fingerprint">SSH 公钥指纹</string>

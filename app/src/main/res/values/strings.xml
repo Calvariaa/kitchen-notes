@@ -163,6 +163,8 @@
     <string name="settings_join_group">Join a group</string>
     <string name="settings_sync_on_launch">Pull on launch</string>
     <string name="settings_push_after_edit">Push right after edits</string>
+    <string name="settings_auto_sync">Auto-sync every 5 min</string>
+    <string name="settings_auto_sync_desc">Also syncs when other family members edit</string>
 
     <string name="settings_section_identity">My identity</string>
     <string name="settings_ssh_fingerprint">SSH public key fingerprint</string>

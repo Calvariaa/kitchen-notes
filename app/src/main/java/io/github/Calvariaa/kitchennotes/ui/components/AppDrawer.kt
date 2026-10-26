@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,6 +38,9 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,6 +68,41 @@ private val DrawerMaxWidth = 320.dp
 
 /** 窄栏阈值：低于它就收起头像和副标题，否则表头会被挤爆 */
 private val DrawerCompactWidth = 210.dp
+
+/**
+ * 抽屉开合动画期间的点击拦截层。
+ *
+ * 为什么需要它：`ModalNavigationDrawer` 的遮罩是
+ * `Scrim(open = drawerState.isOpen, ...)`，而 `isOpen` 读的是
+ * `anchoredDraggableState.settledValue` —— **动画进行中它还是 Closed**。
+ * 于是整个打开动画期间遮罩不带 pointerInput，点在页面那一侧会直接穿到
+ * 下面那一页上，可能顺手把某道菜打开（被滑入的抽屉挡着，当时看不见）。
+ *
+ * 它只要「存在」就够：Compose 的命中测试对同层兄弟只选一条路径，
+ * 一个盖在 content 之上、带 pointerInput 的满屏 Box 会让下层收不到事件。
+ * 再加一记 Final pass 的抬起消费，是防下层走 `PointerEventPass.Initial` 的旁路。
+ *
+ * 放在 content 内部而不是套在 ModalNavigationDrawer 外面很关键：
+ * 拦截层是 `anchoredDraggable` 的后代，祖先仍在命中路径上，
+ * 所以「动画中按下去重新拖动抽屉」照常可用；套到最外层就会把拖动一起吃掉。
+ */
+@Composable
+private fun DrawerAnimationBlocker(active: Boolean) {
+    if (!active) return
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Final)
+                            .changes
+                            .forEach { if (it.changedToUp()) it.consume() }
+                    }
+                }
+            },
+    )
+}
 
 /**
  * 「打开抽屉」的动作。
@@ -178,7 +217,14 @@ fun AppDrawer(
                     }
                 }
             },
-            content = content,
+            content = {
+                Box(Modifier.fillMaxSize()) {
+                    content()
+                    // 开合动画期间挡住页面：遮罩此时还没接管点击，
+                    // 不挡的话手快的点按会穿到下面那一页上
+                    DrawerAnimationBlocker(active = drawerState.isAnimationRunning)
+                }
+            },
         )
     }
 }

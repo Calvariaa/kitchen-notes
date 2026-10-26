@@ -196,6 +196,35 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private val _hostRunning = MutableStateFlow(false)
     val hostRunning: StateFlow<Boolean> = _hostRunning.asStateFlow()
 
+    /** 定时同步协程；设置里改了间隔或开关时要重建 */
+    private var autoSyncJob: Job? = null
+
+    /**
+     * 按 [AppSettings.autoSyncMinutes] 启动（或重启）定时同步。
+     * 0 = 关。主机和成员都走 [runSync]，区别只在 runSync 内部：
+     * 主机是「裸仓库 ↔ 工作区」，成员是「本机 ↔ 主机」。
+     *
+     * 为什么放在 ViewModel 而不是 Service：同步的前提是 App 已启动且用户可能在看列表，
+     * ViewModel 的生命周期刚好覆盖这个窗口；做成后台 Service 反而要处理
+     * 「用户不在前台时要不要唤醒 UI」这种本不存在的问题。
+     */
+    fun restartAutoSync() {
+        autoSyncJob?.cancel()
+        autoSyncJob = null
+        val minutes = _settings.value.autoSyncMinutes
+        if (minutes <= 0) return
+        val g = _group.value ?: return
+        // 没加家庭组时同步无意义，纯浪费电
+        if (g.role == FamilyGroup.Role.NONE) return
+        autoSyncJob = viewModelScope.launch {
+            while (true) {
+                delay(minutes * 60_000L)
+                // 已经在同步就跳过这一轮，避免两个 JGit 操作撞仓库锁
+                if (!_syncing.value) runSync(silent = true)
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- 生成
 
     private val _generating = MutableStateFlow(false)
@@ -260,13 +289,17 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
             _loading.value = false
             _booted.value = true
 
+            // 定时同步要等工作区就绪后再起；间隔/开关变了会重建
+            restartAutoSync()
+
             // 之前是主机的话，开机自动把服务拉起来，否则家庭组会「掉线」
             val g = _group.value
             val id = _identity.value
             if (g?.role == FamilyGroup.Role.HOST && id != null) {
                 startHost(id, g.name)
-            }
-            if (_settings.value.syncOnLaunch && g?.role == FamilyGroup.Role.MEMBER) {
+                // 启动时把裸仓库里成员的改动拉进工作区，主机自己也得同步一次
+                runSync(silent = true)
+            } else if (_settings.value.syncOnLaunch && g?.role == FamilyGroup.Role.MEMBER) {
                 runSync(silent = true)
             }
             // 启动时静默查一次新版：只有真有更新才会出横幅，
@@ -420,6 +453,8 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         _menus.value = (_menus.value + menu).sortedWith(menuOrder)
         viewModelScope.launch {
             withContext(Dispatchers.IO) { app.menus.upsert(menu) }
+            // 新建菜单也要同步，否则另一台设备看不到这顿饭
+            commitAndPush("menu:add $id")
         }
         return id
     }
@@ -431,7 +466,7 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     /** 勾选/取消一道菜。新加入的条目从菜谱取标题快照 */
     fun toggleMenuRecipe(menuId: String, recipeId: String) {
         val title = getRecipe(recipeId)?.title.orEmpty()
-        mutateMenu(menuId) { menu ->
+        mutateMenu(menuId, commitMessage = "menu:edit $menuId") { menu ->
             val next = if (menu.items.any { it.recipeId == recipeId }) {
                 menu.items.filterNot { it.recipeId == recipeId }
             } else {
@@ -442,10 +477,10 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     }
 
     fun setMenuSlot(menuId: String, slot: MealSlot) =
-        mutateMenu(menuId) { it.copy(slot = slot, updatedAt = System.currentTimeMillis()) }
+        mutateMenu(menuId, commitMessage = "menu:edit $menuId") { it.copy(slot = slot, updatedAt = System.currentTimeMillis()) }
 
     fun setMenuDate(menuId: String, date: String) =
-        mutateMenu(menuId) { it.copy(date = date, updatedAt = System.currentTimeMillis()) }
+        mutateMenu(menuId, commitMessage = "menu:edit $menuId") { it.copy(date = date, updatedAt = System.currentTimeMillis()) }
 
     fun setMenuNote(menuId: String, note: String) {
         // 备注是自由文本，用户会一个字一个字地敲。走 mutateMenu 会把每个按键都变成
@@ -460,15 +495,18 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         noteSaveJob = viewModelScope.launch {
             delay(NOTE_SAVE_DEBOUNCE_MS)
             withContext(Dispatchers.IO) { app.menus.upsert(next) }
+            // 防抖落盘后再提交，避免每个按键都触发一次网络往返
+            commitAndPush("menu:note $menuId")
         }
     }
 
     private var noteSaveJob: Job? = null
 
-    fun toggleMenuStaple(menuId: String, staple: Staple) = mutateMenu(menuId) { menu ->
-        val next = if (menu.staples.contains(staple)) menu.staples - staple else menu.staples + staple
-        menu.copy(staples = next, updatedAt = System.currentTimeMillis())
-    }
+    fun toggleMenuStaple(menuId: String, staple: Staple) =
+        mutateMenu(menuId, commitMessage = "menu:edit $menuId") { menu ->
+            val next = if (menu.staples.contains(staple)) menu.staples - staple else menu.staples + staple
+            menu.copy(staples = next, updatedAt = System.currentTimeMillis())
+        }
 
     /**
      * 打分。0 = 取消评分。
@@ -823,6 +861,8 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         viewModelScope.launch {
             val next = withContext(Dispatchers.IO) { app.settings.updateSuspend(transform) }
             _settings.value = next
+            // 同步间隔/开关变了，定时协程要按新值重建
+            restartAutoSync()
         }
     }
 
@@ -831,7 +871,11 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private fun server(): GitServerHost = app.gitServer ?: synchronized(this) {
         app.gitServer ?: GitServerHost(
             app.baseContext, app.settings, app.hostRepository, app.recipes, app.gitRepo,
-        ).also { app.gitServer = it }
+        ).also {
+            app.gitServer = it
+            // 成员 push 完成后，主机 UI 立刻反映新数据
+            it.onRemoteChange = { reload() }
+        }
     }
 
     /**
@@ -943,12 +987,16 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
                 val result = withContext(Dispatchers.IO) { app.sync() }
                 // 主机路径下 app.sync() 内部已经把成员提交并进工作区，必须重新读盘
                 reload()
-                // 同步层只回结构化事实，这里按当前语言渲染
-                _syncMessage.value = result.parts.toUiText(result)
+                // 静默（定时）同步只在真有新数据或冲突时才弹提示，免得每 5 分钟刷一条
+                val notable = result.pulledCommits > 0 || result.conflictsResolved > 0
+                if (!silent || notable) {
+                    _syncMessage.value = result.parts.toUiText(result)
+                }
             } catch (e: SyncError) {
-                _syncMessage.value = e.toUiText()
+                // 静默时网络错误不打扰用户（比如这会儿不在同一个 WiFi 下）
+                if (!silent) _syncMessage.value = e.toUiText()
             } catch (t: Throwable) {
-                _syncMessage.value = UiText.of(R.string.sync_failed, t.message.orEmpty())
+                if (!silent) _syncMessage.value = UiText.of(R.string.sync_failed, t.message.orEmpty())
             } finally {
                 _syncing.value = false
             }

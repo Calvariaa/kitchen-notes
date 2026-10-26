@@ -497,6 +497,12 @@ fun SettingsScreen(
                         checked = settings.pushAfterEdit,
                         onChange = { v -> vm.updateSettings { it.copy(pushAfterEdit = v) } },
                     )
+                    SettingSwitch(
+                        title = stringResource(R.string.settings_auto_sync),
+                        subtitle = stringResource(R.string.settings_auto_sync_desc),
+                        checked = settings.autoSyncMinutes > 0,
+                        onChange = { v -> vm.updateSettings { it.copy(autoSyncMinutes = if (v) 5 else 0) } },
+                    )
                 }
             }
 

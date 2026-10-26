@@ -70,6 +70,13 @@ class GitServerHost(
     @Volatile
     private var groupNameOverride: String? = null
 
+    /**
+     * 成员 push 完成后、工作区已更新时的回调。由 ViewModel 注入，
+     * 用来在主机 UI 上立刻反映出家人的改动（而不是等下一次手动刷新）。
+     */
+    @Volatile
+    var onRemoteChange: (() -> Unit)? = null
+
     fun setGroupName(name: String) {
         groupNameOverride = name.trim().takeIf { it.isNotBlank() }
     }
@@ -153,6 +160,8 @@ class GitServerHost(
         // ---- git smart HTTP ----
         val gitServlet = MiniGitHandler(repo, this@GitServerHost)
         gitServlet.currentIdentity = identity
+        // 成员推完，主机工作区已更新，通知 UI 刷新
+        gitServlet.onWorkspacePulled = { onRemoteChange?.invoke() }
 
         httpServer.createContext("/grocery.git") { exchange ->
             try {

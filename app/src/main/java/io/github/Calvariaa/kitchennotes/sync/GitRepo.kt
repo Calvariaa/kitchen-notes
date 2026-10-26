@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.sync
 
 import android.content.Context
+import io.github.Calvariaa.kitchennotes.data.Menu
 import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.Recipe
 import io.github.Calvariaa.kitchennotes.data.RecipeRepository
@@ -119,11 +120,22 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
      * 冲突仲裁：pull 之后工作区可能被写入冲突标记。
      * 我们不保留标记，而是把两份都解析出来，留 updatedAt 较大的那份，另一份存进 conflict 目录。
      *
-     * @return 被仲裁的菜谱条数
+     * 菜谱（dishes/）和菜单（menus/）都走这里。只扫 dishes/ 的话，两边同时改同一餐
+     * （比如各给一道菜打了分）会留下带冲突标记的 JSON，反序列化直接失败，
+     * `MenuRepository.all()` 的 runCatching 把这餐静默吞掉，用户看到的是「菜单凭空消失」。
+     *
+     * @return 被仲裁的记录数（菜谱 + 菜单）
      */
-    suspend fun resolveConflictsKeepingNewest(): List<Recipe> = withContext(Dispatchers.IO) {
-        val dir = Paths.dishesDir(ctx)
-        val resolved = mutableListOf<Recipe>()
+    suspend fun resolveConflictsKeepingNewest(): Int = withContext(Dispatchers.IO) {
+        resolveDir(Paths.dishesDir(ctx), Recipe.serializer()) +
+            resolveDir(File(Paths.repo(ctx), "menus"), Menu.serializer())
+    }
+
+    private fun <T> resolveDir(
+        dir: File,
+        serializer: kotlinx.serialization.KSerializer<T>,
+    ): Int {
+        val resolved = mutableListOf<T>()
         val backupDir = File(Paths.root(ctx), "conflicts").apply { mkdirs() }
 
         dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.forEach { file ->
@@ -132,26 +144,41 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
 
             val ours = sliceSide(text, "ours")
             val theirs = sliceSide(text, "theirs")
-            val a = ours?.let { runCatching { json.decodeFromString<Recipe>(it) }.getOrNull() }
-            val b = theirs?.let { runCatching { json.decodeFromString<Recipe>(it) }.getOrNull() }
+            val a = ours?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }
+            val b = theirs?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }
 
-            val winner = listOfNotNull(a, b).maxByOrNull { it.updatedAt }
+            val updatedAtOf: (T) -> Long = { e ->
+                when (e) {
+                    is Recipe -> e.updatedAt
+                    is Menu -> e.updatedAt
+                    else -> 0L
+                }
+            }
+            val idOf: (T) -> String = { e ->
+                when (e) {
+                    is Recipe -> e.id
+                    is Menu -> e.id
+                    else -> file.name.removeSuffix(".json")
+                }
+            }
+
+            val winner = listOfNotNull(a, b).maxByOrNull { updatedAtOf(it) }
             val loser = if (winner === a) b else a
 
             if (winner != null) {
-                file.writeText(json.encodeToString(Recipe.serializer(), winner))
+                file.writeText(json.encodeToString(serializer, winner))
                 resolved += winner
             }
             if (loser != null) {
-                File(backupDir, "${loser.id}-${loser.updatedAt}.json")
-                    .writeText(json.encodeToString(Recipe.serializer(), loser))
+                File(backupDir, "${idOf(loser)}-${updatedAtOf(loser)}.json")
+                    .writeText(json.encodeToString(serializer, loser))
             }
             // 记录合并，方便 UI 提示「有 N 条记录发生冲突，已保留较新版」
             File(backupDir, "merge.log").appendText(
-                "${java.time.Instant.now()} ${file.name} winner=${winner?.updatedAt} loser=${loser?.updatedAt}\n",
+                "${java.time.Instant.now()} ${file.name} winner=${winner?.let(updatedAtOf)} loser=${loser?.let(updatedAtOf)}\n",
             )
         }
-        resolved
+        return resolved.size
     }
 
     private fun sliceSide(text: String, side: String): String? {

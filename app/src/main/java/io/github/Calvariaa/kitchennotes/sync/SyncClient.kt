@@ -118,8 +118,7 @@ class SyncClient(
 
                 if (result == null || !result.mergeStatus.isSuccessful) {
                     // 冲突：交给按 updatedAt 取新的仲裁
-                    val resolved = gitRepo.resolveConflictsKeepingNewest()
-                    conflicts = resolved.size
+                    conflicts = gitRepo.resolveConflictsKeepingNewest()
                     if (conflicts > 0) {
                         git.add().addFilepattern(".").call()
                         git.commit()

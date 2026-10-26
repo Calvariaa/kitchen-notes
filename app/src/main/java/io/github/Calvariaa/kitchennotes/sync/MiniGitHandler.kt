@@ -52,6 +52,10 @@ internal class MiniGitHandler(
     var currentIdentity: io.github.Calvariaa.kitchennotes.data.UserIdentity =
         io.github.Calvariaa.kitchennotes.data.UserIdentity(name = "dish", email = "dish@localhost")
 
+    /** 成员 push 后、工作区已 pull 完成的回调（用于通知 UI 刷新） */
+    @Volatile
+    var onWorkspacePulled: (() -> Unit)? = null
+
     init {
         servlet.init(object : ServletConfig {
             override fun getServletName(): String = "git"
@@ -68,6 +72,7 @@ internal class MiniGitHandler(
                         runCatching {
                             kotlinx.coroutines.runBlocking { host.pullBareIntoWorkspace(currentIdentity) }
                         }
+                        onWorkspacePulled?.invoke()
                     }.also { it.isDaemon = true }.start()
                 }
             }
