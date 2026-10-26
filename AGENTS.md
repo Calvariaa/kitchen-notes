@@ -33,7 +33,10 @@ export JAVA_HOME="$HOME/.gradle/jdks/eclipse_adoptium-21-amd64-windows.2"
 | JDK | 21 | |
 
 版本号无文件：`versionName` 由 `git describe --tags` 推导（tag 后无提交 → 该 tag；有提交 → 抬 patch 加 `-dev.N+g<sha>`），
-`versionCode` = HEAD 提交日期 `yyyyMMdd`。可用 `-Pkitchennotes.versionName=` / `-Pkitchennotes.versionCode=` 覆盖。
+`versionCode` = `HEAD 提交日期 yyyyMMdd * 100 + 当天已合并 tag 序号`（如 `2026102601`）。
+**乘 100 是必需的**：只到天的话同一天发两次 → versionCode 相同 → Android 拒绝覆盖安装
+（`INSTALL_FAILED_VERSION_DOWNGRADE`），应用内更新也会认为「不是新版本」。
+可用 `-Pkitchennotes.versionName=` / `-Pkitchennotes.versionCode=` 覆盖。
 
 ## 架构
 

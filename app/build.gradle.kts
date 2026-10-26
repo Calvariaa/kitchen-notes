@@ -24,9 +24,32 @@ fun gitOut(vararg args: String): String? = try {
     null // 不是 git 工作区（源码包 / 导出目录）时静默降级
 }
 
+// versionCode 必须严格递增，否则同一天发两次release时 Android 直接拒绝覆盖安装
+// （INSTALL_FAILED_VERSION_DOWNGRADE），应用内更新也会判定成「不是新版本」。
+// 日期只到天，所以乘 100 给当天留两位序号：2026102600、2026102601……
+// 上限 2147483647 / 100 ≈ 2147 年，够用。
 val autoVersionCode: Int = run {
     val stamp = gitOut("log", "-1", "--format=%cd", "--date=short") ?: ""
-    stamp.replace("-", "").toIntOrNull()?.takeIf { it > 0 } ?: 1
+    val day = stamp.replace("-", "").toIntOrNull()?.takeIf { it > 0 }
+    if (day == null) {
+        1
+    } else {
+        // 当天序号 = 同一天里比本提交更早（或同为）HEAD 的 v* tag 数量。
+        // 不用 rev-list --count：那个数会因 merge 而跳，且和「第几次发版」无关。
+        val exactTag = gitOut("describe", "--tags", "--exact-match", "HEAD")
+        // --merged HEAD：只数「已经在本提交历史上」的 tag。
+        // 这样重跑旧 tag 也能得到同一个号 —— 若数的是仓库里全部同日 tag，
+        // 后来新增的 tag 会把旧版本的号推进，构建就不再可复现了。
+        val tagsSameDay = gitOut("tag", "--list", "--merged", "HEAD", "v[0-9]*")
+            ?.lines()
+            ?.filter { it.isNotBlank() }
+            ?.count { tag ->
+                gitOut("log", "-1", "--format=%cd", "--date=short", tag) == stamp
+            } ?: 0
+        // 正好打在 tag 上时，这个 tag 自己也被算进去了，要减掉
+        val seq = if (exactTag != null) tagsSameDay - 1 else tagsSameDay
+        day * 100 + seq.coerceIn(0, 99)
+    }
 }
 
 val autoVersionName: String = run {
