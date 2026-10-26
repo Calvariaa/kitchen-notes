@@ -160,6 +160,21 @@ filesDir/store/
 
 13. **Release assets API 里 `size` 是数字，不是字符串**；`JsonPrimitive.content` 取得到，但别 `as? JsonObject` 硬转整个数组。
 
+14. **JGit 7.x 必须开 core library desugaring。** 它用 Java 11 编译，内部调
+    `Files.readString` / `Files.writeString` / `Files.mismatch`，Android 12 (API 31) 上没有
+    （`readString` 要 API 33）。不开脱糖 → 首次建仓库就 `NoSuchMethodError`，表现是
+    **新装后点「开始使用」直接闪退**，且只有旧系统复现（模拟器 API 36 看不出来）。
+    配置：`isCoreLibraryDesugaringEnabled = true` + `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")`。
+    验证办法：反编译 APK 的 dex 查 `Ljava/nio/file/Files;.readString` 是否还在。
+
+15. **`viewModelScope.launch` 里的未捕获异常 = 进程闪退。** 它没有
+    `CoroutineExceptionHandler`，异常直接走默认处理器。凡是用户点了就会触发的路径
+    （引导、导入、同步、下载），都要自己 `try/catch` 并把原因变成 UI 可见的文案。
+
+16. **git 仓库初始化不能当成进入 App 的前提。** 列表读的是 `repo/dishes/*.json`，
+    不依赖 `.git`。`ensureIdentity` 里 `runCatching` 掉 `ensureInitialized`，
+    失败只记 log —— 否则一次 JGit 抽风就把用户永久挡在引导页。
+
 ## 权限
 
 `INTERNET`、`ACCESS_NETWORK_STATE`、`ACCESS_WIFI_STATE`、`REQUEST_INSTALL_PACKAGES`（应用内更新）。
