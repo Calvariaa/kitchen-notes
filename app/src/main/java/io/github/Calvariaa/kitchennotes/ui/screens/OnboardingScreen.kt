@@ -1,5 +1,6 @@
 package io.github.Calvariaa.kitchennotes.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +47,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.Calvariaa.kitchennotes.R
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
+import io.github.Calvariaa.kitchennotes.ui.i18n.text
 
 /**
  * 首次启动的身份引导。
@@ -63,6 +66,7 @@ fun OnboardingScreen(
     var email by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val loading by vm.loading.collectAsState()
+    val error by vm.onboardingError.collectAsState()
 
     val valid = name.isNotBlank() && email.contains("@") && email.contains(".")
 
@@ -168,6 +172,22 @@ fun OnboardingScreen(
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.onboarding_start))
+                }
+            }
+
+            // 失败原因就地展示：用户能看见到底哪一步炸了，我们也能靠一句
+            // 「初始化失败：xxx」定位问题，比「点了就闪退」有用得多
+            AnimatedVisibility(error != null) {
+                Column {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = error?.text().orEmpty(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(onClick = { vm.clearOnboardingError() }) {
+                        Text(stringResource(R.string.action_dismiss))
+                    }
                 }
             }
 

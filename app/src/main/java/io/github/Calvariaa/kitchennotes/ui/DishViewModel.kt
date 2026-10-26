@@ -59,6 +59,10 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private val _booted = MutableStateFlow(false)
     val booted: StateFlow<Boolean> = _booted.asStateFlow()
 
+    /** 引导页的失败原因；null 表示没有错误 */
+    private val _onboardingError = MutableStateFlow<UiText?>(null)
+    val onboardingError: StateFlow<UiText?> = _onboardingError.asStateFlow()
+
     // ---------------------------------------------------------------- 菜谱
 
     private val _recipes = MutableStateFlow<List<Recipe>>(emptyList())
@@ -195,13 +199,37 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         }
     }
 
+    /**
+     * 完成引导。
+     *
+     * 这里必须自己兜异常：viewModelScope 的协程没有 CoroutineExceptionHandler，
+     * 未捕获异常会一路走到默认处理器 → 进程崩溃。而这条路径恰恰是最容易出问题的
+     * （RSA 密钥生成、首次建 git 仓库、文件系统读写），在旧机型上任何一个抛错
+     * 用户看到的都是「点了开始使用就闪退」，且没有任何可操作的信息。
+     *
+     * 分两步的好处：身份存盘成功就算成功，git 初始化失败不该把用户挡在门外 ——
+     * 菜谱列表不依赖 .git，同步时 ensureInitialized 还会再试一次。
+     */
     fun completeOnboarding(name: String, email: String) {
         viewModelScope.launch {
             _loading.value = true
-            val id = app.ensureIdentity(name, email)
-            _identity.value = id
-            _loading.value = false
+            _onboardingError.value = null
+            try {
+                val id = app.ensureIdentity(name, email)
+                _identity.value = id
+            } catch (t: Throwable) {
+                _onboardingError.value = UiText.of(
+                    R.string.onboarding_err_failed,
+                    t.message ?: t::class.java.simpleName,
+                )
+            } finally {
+                _loading.value = false
+            }
         }
+    }
+
+    fun clearOnboardingError() {
+        _onboardingError.value = null
     }
 
     fun reload() {

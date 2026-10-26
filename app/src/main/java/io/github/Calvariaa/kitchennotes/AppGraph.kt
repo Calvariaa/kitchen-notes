@@ -17,6 +17,8 @@ import io.github.Calvariaa.kitchennotes.sync.SyncPart
 import io.github.Calvariaa.kitchennotes.sync.SyncResult
 import io.github.Calvariaa.kitchennotes.update.ApkDownloader
 import io.github.Calvariaa.kitchennotes.update.UpdateChecker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 手写的服务定位器。
@@ -57,10 +59,15 @@ class AppGraph(private val app: Application) {
             existing.sshPrivateKeyPem.isNotBlank() &&
             existing.email == email
 
+        // RSA-2048 生成在低端机上要几十到几百毫秒。这是 suspend 函数，
+        // 调用方都在 viewModelScope（主线程）里，所以必须显式切走 ——
+        // 在 Android 12 的旧机型上主线程卡超过 5 秒就是 ANR，卡 1 秒也会掉帧。
         val (priv, pub) = if (keepKey) {
             existing!!.sshPrivateKeyPem to existing.sshPublicKey
         } else {
-            SshKeyFactory.generateKeyPair(email.ifBlank { "dish@localhost" })
+            withContext(Dispatchers.Default) {
+                SshKeyFactory.generateKeyPair(email.ifBlank { "dish@localhost" })
+            }
         }
 
         val identity = UserIdentity(
@@ -70,8 +77,16 @@ class AppGraph(private val app: Application) {
             sshPublicKey = pub,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
         )
+        // 身份先落盘：这一步成功，用户就已经「进来了」，可以正常记菜谱。
         settings.saveIdentity(identity)
-        gitRepo.ensureInitialized(identity)
+
+        // git 仓库初始化（JGit + 文件系统）是首次启动最容易炸的一步，但它不是
+        // 进入 App 的前提 —— 列表读的是 files/store/repo/dishes 下的 JSON，不依赖 .git。
+        // 所以这里吞掉失败：真出问题，同步时会再试一次并报可读的错误，
+        // 而不是把用户挡在引导页外面还看不见原因。
+        runCatching { gitRepo.ensureInitialized(identity) }
+            .onFailure { android.util.Log.w("AppGraph", "git init failed during onboarding", it) }
+
         return identity
     }
 

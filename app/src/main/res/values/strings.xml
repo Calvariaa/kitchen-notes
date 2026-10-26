@@ -279,6 +279,8 @@
     <string name="settings_check_update">Check for updates</string>
     <string name="update_checking">Checking for updates…</string>
     <string name="update_current">Up to date (version %1$s)</string>
+    <!-- 当前安装版本的静态标签，与「已是最新」不是一回事 -->
+    <string name="settings_current_version">Current version %1$s</string>
     <string name="update_available">Version %1$s is available</string>
     <string name="update_release_date">Released %1$s</string>
     <string name="update_download">Download &amp; install</string>
@@ -296,4 +298,11 @@
     <string name="update_dialog_title">New version available</string>
     <string name="update_dialog_later">Later</string>
     <string name="update_dialog_now">Update</string>
+    <string name="onboarding_err_failed">Could not finish setup: %1$s</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="settings_section_diagnostics">Diagnostics</string>
+    <string name="settings_crash_note">The app crashed last time. Copy this and send it over — it says exactly where.</string>
+    <string name="settings_crash_copy">Copy log</string>
+    <string name="settings_crash_clear">Clear</string>
+    <string name="settings_crash_copied">Crash log copied</string>
 </resources>

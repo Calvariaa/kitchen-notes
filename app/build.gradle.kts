@@ -91,7 +91,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        isCoreLibraryDesugaringEnabled = false
+        // JGit 7.x 是给 Java 11 编译的，内部用了 Files.readString / List.of /
+        // Optional.isEmpty / Map.of 等 API —— 这些在 Android 12 (API 31) 上
+        // 都不存在（readString 要 API 33）。不开脱糖，JGit 在旧机上第一次调用
+        // 就抛 NoSuchMethodError/NoClassDefFoundError，表现就是「点开始使用闪退」。
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildFeatures {
@@ -154,4 +158,7 @@ dependencies {
     implementation(libs.jgit.ssh.jsch)
     // JGit 的 GitServlet 继承自 jakarta.servlet.http.HttpServlet，需要 API 类才能编译与运行
     implementation(libs.jakarta.servlet.api)
+
+    // 核心库脱糖运行时（配合 isCoreLibraryDesugaringEnabled）
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }

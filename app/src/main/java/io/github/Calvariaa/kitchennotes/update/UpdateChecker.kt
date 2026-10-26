@@ -35,6 +35,12 @@ data class UpdateInfo(
     val sha256Url: String?,
     val sizeBytes: Long,
     val publishedAt: String,
+    /** owner/repo，用于拼 API 直链 */
+    val repo: String = "",
+    /** Release asset 的数字 id —— browser_download_url 被墙时走 API 端点 */
+    val apkAssetId: Long = 0L,
+    /** sha256 文件的 asset id，同上 */
+    val sha256AssetId: Long = 0L,
 )
 
 /**
@@ -90,7 +96,11 @@ class UpdateChecker(
 
             val info = try {
                 // 列表模式下 body 是数组，挑第一个带 APK 的；单条模式直接解析对象
-                val candidates = if (includePrerelease) parseList(body) else listOfNotNull(parse(body))
+                val candidates = if (includePrerelease) {
+                    parseList(body)
+                } else {
+                    listOfNotNull(parse(body))
+                }
                 candidates.firstOrNull { !it.isDraft }
             } catch (e: UpdateError) {
                 throw e
@@ -138,8 +148,12 @@ class UpdateChecker(
             apkFileName = apkName,
             sha256Url = shaAsset?.get("browser_download_url")
                 ?.jsonPrimitive?.contentOrNullSafe(),
+            sha256AssetId = shaAsset?.get("id")
+                ?.jsonPrimitive?.contentOrNullSafe()?.toLongOrNull() ?: 0L,
             sizeBytes = size,
             publishedAt = root["published_at"]?.jsonPrimitive?.contentOrNullSafe().orEmpty(),
+            repo = repoOf(root),
+            apkAssetId = apk["id"]?.jsonPrimitive?.contentOrNullSafe()?.toLongOrNull() ?: 0L,
         )
     }
 
@@ -170,6 +184,20 @@ class UpdateChecker(
         val nums = core.split('.').map { it.toIntOrNull() ?: 0 }
         val pre = cleaned.removePrefix(core).trimStart('-', '+', '.')
         return nums to pre
+    }
+
+    /**
+     * 从 `html_url`（https://github.com/OWNER/REPO/releases/tag/vX）反推 OWNER/REPO。
+     * `/releases/latest` 的 URL 里不带仓库名，只有从这里能拿到，而 API 直链需要它。
+     */
+    private fun repoOf(root: JsonObject): String {
+        val html = root["html_url"]?.jsonPrimitive?.contentOrNullSafe().orEmpty()
+        val marker = "github.com/"
+        val start = html.indexOf(marker)
+        if (start < 0) return ""
+        val rest = html.substring(start + marker.length)
+        val parts = rest.split('/')
+        return if (parts.size >= 2) "${parts[0]}/${parts[1]}" else ""
     }
 
     private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =
@@ -207,13 +235,59 @@ class ApkDownloader(
 
         val target = File(dir, info.apkFileName)
 
-        val request = Request.Builder().url(info.apkUrl).build()
-        val total: Long
+        // browser_download_url 指向 github.com 的 objects CDN，在国内网络下
+        // 经常连不上或中途 reset；api.github.com 的 asset 端点走另一条链路，
+        // 实测可用。所以先试直链，失败再用 API 端点重试 —— 对用户是透明的，
+        // 不因为它俩是同一个文件就认为一定同时可达。
+        val attempts = buildList {
+            add(info.apkUrl to false)
+            if (info.apkAssetId > 0L && info.repo.isNotBlank()) {
+                add(
+                    "https://api.github.com/repos/${info.repo}/releases/assets/${info.apkAssetId}" to true,
+                )
+            }
+        }
+
+        var lastError: UpdateError? = null
+        for ((url, viaApi) in attempts) {
+            try {
+                fetch(url, viaApi, target, info.sizeBytes, onProgress)
+                lastError = null
+                break
+            } catch (e: UpdateError) {
+                lastError = e
+                target.delete()
+                // HTTP 4xx（除了 403 限速）是确定的失败，换链路也救不了
+                if (e is UpdateError.Http && e.code in 400..499 && e.code != 403) break
+            }
+        }
+        if (lastError != null) throw lastError!!
+
+        verify(ctx, info, target)
+        target
+    }
+
+    /** 单次下载尝试。按已写字节回调进度。 */
+    private fun fetch(
+        url: String,
+        viaApi: Boolean,
+        target: File,
+        fallbackTotal: Long,
+        onProgress: (Long, Long) -> Unit,
+    ) {
+        val request = Request.Builder().url(url)
+            .apply {
+                // API 端点必须显式要二进制，否则拿到的是 JSON 元数据
+                if (viaApi) header("Accept", "application/octet-stream")
+            }
+            .build()
+
         try {
             client.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) throw UpdateError.Http(resp.code, resp.message)
                 val body = resp.body ?: throw UpdateError.Parse("empty body")
-                total = body.contentLength().takeIf { it > 0 } ?: info.sizeBytes.takeIf { it > 0 } ?: 0L
+                val total = body.contentLength().takeIf { it > 0 }
+                    ?: fallbackTotal.takeIf { it > 0 } ?: 0L
 
                 body.byteStream().use { input ->
                     target.outputStream().use { output ->
@@ -237,12 +311,8 @@ class ApkDownloader(
                 }
             }
         } catch (e: IOException) {
-            target.delete()
             throw UpdateError.Network(e.message)
         }
-
-        verify(ctx, info, target)
-        target
     }
 
     /** 有 sha256 就严格比对；没有就只做一个最小完整性检查（APK 是 zip，头两字节必须是 PK） */
@@ -278,6 +348,34 @@ class ApkDownloader(
             apk.delete()
             throw UpdateError.Parse("downloaded file is not an APK")
         }
+    }
+
+    /**
+     * 取 sha256 文件内容。和 APK 一样两条链路都试：
+     * 直链拿不到时用 API asset 端点，仍失败就返回 null 走宽松校验。
+     */
+    private suspend fun fetchChecksum(info: UpdateInfo): String? = withContext(Dispatchers.IO) {
+        val urls = buildList {
+            info.sha256Url?.takeIf { it.isNotBlank() }?.let { add(it to false) }
+            if (info.sha256AssetId > 0L && info.repo.isNotBlank()) {
+                add(
+                    "https://api.github.com/repos/${info.repo}/releases/assets/${info.sha256AssetId}" to true,
+                )
+            }
+        }
+        for ((url, viaApi) in urls) {
+            val text = runCatching {
+                val req = Request.Builder().url(url)
+                    .apply { if (viaApi) header("Accept", "application/octet-stream") }
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) null else resp.body?.string()
+                }
+            }.getOrNull()
+            val hash = text?.trim()?.split(Regex("\\s+"))?.firstOrNull()
+            if (!hash.isNullOrBlank()) return@withContext hash
+        }
+        null
     }
 
     private fun sha256(file: File): String {

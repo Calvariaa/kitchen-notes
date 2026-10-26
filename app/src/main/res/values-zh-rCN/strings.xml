@@ -276,6 +276,8 @@
     <string name="settings_check_update">检查更新</string>
     <string name="update_checking">正在检查更新…</string>
     <string name="update_current">已是最新版本（%1$s）</string>
+    <!-- 当前安装版本的静态标签，与「已是最新」不是一回事 -->
+    <string name="settings_current_version">当前版本 %1$s</string>
     <string name="update_available">有新版本 %1$s 可用</string>
     <string name="update_release_date">发布于 %1$s</string>
     <string name="update_download">下载并安装</string>
@@ -293,4 +295,11 @@
     <string name="update_dialog_title">发现新版本</string>
     <string name="update_dialog_later">稍后</string>
     <string name="update_dialog_now">去更新</string>
+    <string name="onboarding_err_failed">初始化失败：%1$s</string>
+    <string name="action_dismiss">知道了</string>
+    <string name="settings_section_diagnostics">诊断</string>
+    <string name="settings_crash_note">上次运行崩溃了。复制这段发给开发者，里面有确切的出错位置。</string>
+    <string name="settings_crash_copy">复制日志</string>
+    <string name="settings_crash_clear">清空</string>
+    <string name="settings_crash_copied">崩溃日志已复制</string>
 </resources>

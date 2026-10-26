@@ -10,6 +10,8 @@ class KitchenNotesApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // 尽早挂上崩溃记录：Application.onCreate 之前/之中的崩溃也能留证据
+        io.github.Calvariaa.kitchennotes.diag.CrashLog.install(this)
         instance = this
         graph = AppGraph(this)
     }

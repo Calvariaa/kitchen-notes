@@ -73,7 +73,10 @@ import io.github.Calvariaa.kitchennotes.ui.components.SectionTitle
 import io.github.Calvariaa.kitchennotes.ui.components.SoftBox
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import android.widget.Toast
 import io.github.Calvariaa.kitchennotes.BuildConfig
+import io.github.Calvariaa.kitchennotes.diag.CrashLog
+import io.github.Calvariaa.kitchennotes.ui.components.MarkdownText
 import io.github.Calvariaa.kitchennotes.ui.i18n.AppLanguage
 import io.github.Calvariaa.kitchennotes.ui.i18n.text
 import io.github.Calvariaa.kitchennotes.update.UpdateInfo
@@ -113,6 +116,8 @@ fun SettingsScreen(
     var apiKeyVisible by remember { mutableStateOf(false) }
     var showJoinChoice by remember { mutableStateOf(false) }
     var showHostNameDialog by remember { mutableStateOf(false) }
+    // 清空崩溃日志后要重新读一次；用计数当 key 触发重算
+    var crashVersion by remember { mutableStateOf(0) }
 
     // 用户可能被我们送去「安装未知应用」设置页，回来时要把没走完的安装接上。
     // 用 Activity 的 RESUME 生命周期做触发点：比轮询权限状态省电，也比要求用户
@@ -547,7 +552,7 @@ fun SettingsScreen(
             SoftBox(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        stringResource(R.string.update_current, BuildConfig.VERSION_NAME),
+                        stringResource(R.string.settings_current_version, BuildConfig.VERSION_NAME),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -574,14 +579,11 @@ fun SettingsScreen(
                                 )
                             }
                             if (info.notes.isNotBlank()) {
-                                Text(
-                                    stringResource(R.string.update_section_notes),
-                                    style = MaterialTheme.typography.labelMedium,
-                                )
-                                Text(
-                                    info.notes.trim().take(1200),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                // Release notes 是 CI 生成的 Markdown，按 Markdown 渲染；
+                                // 纯文本显示会把 ** 和 ### 原样露出来
+                                MarkdownText(
+                                    markdown = info.notes.trim().take(4000),
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                             }
                         }
@@ -613,9 +615,14 @@ fun SettingsScreen(
                         }
                     }
 
-                    AnimatedVisibility(updateMessage != null) {
+                    // 有新版本时上方标题已经说了「Version x 可用」，
+                    // 这里再打一遍同样的句子纯属噪音；只在没有版本卡片时显示普通提示
+                    val messageText = updateMessage?.text().orEmpty()
+                    val redundant = info != null && messageText ==
+                        stringResource(R.string.update_available, info.versionName)
+                    AnimatedVisibility(messageText.isNotEmpty() && !redundant) {
                         Text(
-                            updateMessage?.text().orEmpty(),
+                            messageText,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -669,6 +676,44 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     )
+                }
+            }
+
+            // ==================== 诊断 ====================
+            // 崩过一次才出现：没崩过时这一块完全不存在，不占版面也不制造焦虑
+            val crashText = remember(crashVersion) { CrashLog.read(ctx) }
+            if (crashText.isNotBlank()) {
+                SectionTitle(stringResource(R.string.settings_section_diagnostics))
+                SoftBox(modifier = Modifier.fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            stringResource(R.string.settings_crash_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Text(
+                            crashText.takeLast(1200),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    clipboard.setText(AnnotatedString(crashText))
+                                    Toast.makeText(ctx, R.string.settings_crash_copied, Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text(stringResource(R.string.settings_crash_copy)) }
+                            TextButton(
+                                onClick = {
+                                    CrashLog.clear(ctx)
+                                    crashVersion++
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text(stringResource(R.string.settings_crash_clear)) }
+                        }
+                    }
                 }
             }
 
