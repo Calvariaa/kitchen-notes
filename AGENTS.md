@@ -210,6 +210,14 @@ filesDir/store/
 20. **抽屉的 `popUpTo` 不能把 LIST 一起弹掉。** 设置页不挂抽屉，但它的返回箭头仍要能
     退回列表；`popUpTo(LIST) { inclusive = true }` 会让那个箭头点了没反应。
 
+21. **`ModalDrawerSheet` 不指定宽度就接近铺满整屏。** 它只受
+    `DrawerDefaults.MaximumDrawerWidth`（360dp）约束，在 411dp 的常见手机宽度上
+    只剩 51dp 的遮罩，观感像「跳了个页面」而不是「拉出侧栏」。宽度要在
+    `BoxWithConstraints` 里按 `maxWidth` 比例算，并同时兜上下限：
+    纯 `1/3` 在竖屏手机上只有 ~137dp，图标+两字标题会被压成竖排。
+    窄栏还要单独降级表头（头像 44→32dp、`titleMedium`→`titleSmall`、隐藏副标题），
+    否则副标题会把标题挤断行。
+
 ## 权限
 
 `INTERNET`、`ACCESS_NETWORK_STATE`、`ACCESS_WIFI_STATE`、`REQUEST_INSTALL_PACKAGES`（应用内更新）。

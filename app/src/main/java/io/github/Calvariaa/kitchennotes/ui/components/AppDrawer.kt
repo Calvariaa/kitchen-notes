@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.Calvariaa.kitchennotes.R
 import kotlinx.coroutines.launch
@@ -48,6 +50,20 @@ enum class DrawerDestination(val labelRes: Int) {
     MENUS(R.string.nav_menus),
     SETTINGS(R.string.nav_settings),
 }
+
+/**
+ * 抽屉占屏宽的比例。
+ *
+ * 纯比例会撞上可用性下限：411dp 的手机三分之一只有 137dp，剥掉图标和内边距后
+ * 留给文字的不到 40dp，标题会被压成竖排。所以下面再兜一个地板，只有平板/横屏
+ * 才真正吃到 1/3。
+ */
+private const val DRAWER_WIDTH_FRACTION = 1f / 3f
+private val DrawerMinWidth = 180.dp
+private val DrawerMaxWidth = 320.dp
+
+/** 窄栏阈值：低于它就收起头像和副标题，否则表头会被挤爆 */
+private val DrawerCompactWidth = 210.dp
 
 /**
  * 「打开抽屉」的动作。
@@ -106,41 +122,59 @@ fun AppDrawer(
             drawerState = drawerState,
             gesturesEnabled = gesturesEnabled,
             drawerContent = {
-                ModalDrawerSheet(
-                    drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                    drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
-                ) {
-                    DrawerHeader(headerTitle, headerSubtitle)
-
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                    Spacer(Modifier.padding(top = 4.dp))
-
-                    DrawerDestination.entries.forEach { dest ->
-                        NavigationDrawerItem(
-                            label = {
-                                Text(
-                                    text = stringResource(dest.labelRes),
-                                    fontWeight = if (dest == current) FontWeight.SemiBold
-                                    else FontWeight.Normal,
-                                )
-                            },
-                            icon = { Icon(dest.icon(), contentDescription = null) },
-                            selected = dest == current,
-                            onClick = {
-                                scope.launch { drawerState.close() }
-                                if (dest != current) onNavigate(dest)
-                            },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = NavigationDrawerItemDefaults.colors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            ),
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                /*
+                 * 宽度按屏幕比例算，不写死 dp。
+                 *
+                 * ModalDrawerSheet 默认只受 DrawerDefaults.MaximumDrawerWidth(360dp) 约束，
+                 * 在 411dp 的手机上就等于铺满整屏 —— 观感变成「换了个页面」而不是「拉出了侧栏」。
+                 * 这里取屏幕宽度的三分之一，小屏自然更窄，平板/横屏也不会变成一条巨型边栏。
+                 */
+                BoxWithConstraints {
+                    val drawerWidth = (maxWidth * DRAWER_WIDTH_FRACTION)
+                        .coerceIn(DrawerMinWidth, DrawerMaxWidth)
+                    ModalDrawerSheet(
+                        modifier = Modifier.width(drawerWidth),
+                        drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+                    ) {
+                        DrawerHeader(
+                            title = headerTitle,
+                            subtitle = headerSubtitle,
+                            compact = drawerWidth < DrawerCompactWidth,
                         )
+
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                        Spacer(Modifier.padding(top = 4.dp))
+
+                        DrawerDestination.entries.forEach { dest ->
+                            NavigationDrawerItem(
+                                label = {
+                                    Text(
+                                        text = stringResource(dest.labelRes),
+                                        fontWeight = if (dest == current) FontWeight.SemiBold
+                                        else FontWeight.Normal,
+                                        maxLines = 1,
+                                    )
+                                },
+                                icon = { Icon(dest.icon(), contentDescription = null) },
+                                selected = dest == current,
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    if (dest != current) onNavigate(dest)
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = NavigationDrawerItemDefaults.colors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                ),
+                                // 窄栏里 12dp 的外边距会把文字挤到换行，压到 8dp
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                        }
                     }
                 }
             },
@@ -155,18 +189,31 @@ private fun DrawerDestination.icon() = when (this) {
     DrawerDestination.SETTINGS -> Icons.Filled.Settings
 }
 
+/**
+ * 抽屉表头。
+ *
+ * [compact] 为真是窄栏（手机竖屏三分之一）的形态：头像从 44dp 收到 32dp、
+ * 左右外边距减半、副标题让位。否则「家庭菜谱 · 已连接 3 台设备」这类副标题
+ * 会把标题挤成两行，看起来像排版事故。
+ */
 @Composable
-private fun DrawerHeader(title: String, subtitle: String?) {
+private fun DrawerHeader(title: String, subtitle: String?, compact: Boolean) {
+    val avatarSize = if (compact) 32.dp else 44.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .padding(start = 20.dp, end = 20.dp, top = 32.dp, bottom = 18.dp),
+            .padding(
+                start = if (compact) 14.dp else 20.dp,
+                end = if (compact) 10.dp else 20.dp,
+                top = if (compact) 24.dp else 32.dp,
+                bottom = if (compact) 12.dp else 18.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(avatarSize)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center,
@@ -175,21 +222,26 @@ private fun DrawerHeader(title: String, subtitle: String?) {
                 Icons.Filled.Restaurant,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(if (compact) 18.dp else 22.dp),
             )
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
+                style = if (compact) MaterialTheme.typography.titleSmall
+                else MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (!subtitle.isNullOrBlank()) {
+            if (!compact && !subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
