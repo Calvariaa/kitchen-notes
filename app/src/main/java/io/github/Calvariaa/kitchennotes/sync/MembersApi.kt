@@ -145,6 +145,20 @@ object SshKeyFactory {
         return privatePem to encodeOpenSshPublic(pub, comment = email)
     }
 
+    /**
+     * 按 OpenSSH 规范算公钥指纹：`SHA256:` + 无填充 base64(sha256(blob))。
+     *
+     * 不能截取公钥文本当指纹 —— `ssh-rsa AAAAB3NzaC1yc2EAAA` 开头是协议常量、
+     * 结尾是注释（邮箱），都与密钥字节无关。重新生成密钥后截首尾的「指纹」
+     * 一个字符都不会变，用户会以为刷新没生效。
+     */
+    fun fingerprint(publicKey: String): String {
+        val b64 = publicKey.trim().split(Regex("\\s+")).getOrNull(1) ?: return ""
+        val blob = runCatching { JBase64.getDecoder().decode(b64) }.getOrNull() ?: return ""
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(blob)
+        return "SHA256:" + JBase64.getEncoder().withoutPadding().encodeToString(digest)
+    }
+
     private fun encodeOpenSshPublic(pub: RSAPublicKey, comment: String): String {
         val blob = ByteArrayBuilder()
             .writeString("ssh-rsa")

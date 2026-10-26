@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import io.github.Calvariaa.kitchennotes.R
 import io.github.Calvariaa.kitchennotes.ai.DeepSeekClient
 import io.github.Calvariaa.kitchennotes.data.FamilyGroup
+import io.github.Calvariaa.kitchennotes.sync.SshKeyFactory
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
 import io.github.Calvariaa.kitchennotes.ui.components.SectionTitle
 import io.github.Calvariaa.kitchennotes.ui.components.SoftBox
@@ -529,7 +530,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            pub.take(24) + "…" + pub.takeLast(20),
+                            SshKeyFactory.fingerprint(pub),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
