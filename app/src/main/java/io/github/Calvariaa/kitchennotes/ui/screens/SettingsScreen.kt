@@ -46,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +71,8 @@ import io.github.Calvariaa.kitchennotes.data.FamilyGroup
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
 import io.github.Calvariaa.kitchennotes.ui.components.SectionTitle
 import io.github.Calvariaa.kitchennotes.ui.components.SoftBox
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import io.github.Calvariaa.kitchennotes.BuildConfig
 import io.github.Calvariaa.kitchennotes.ui.i18n.AppLanguage
 import io.github.Calvariaa.kitchennotes.ui.i18n.text
@@ -109,6 +113,18 @@ fun SettingsScreen(
     var apiKeyVisible by remember { mutableStateOf(false) }
     var showJoinChoice by remember { mutableStateOf(false) }
     var showHostNameDialog by remember { mutableStateOf(false) }
+
+    // 用户可能被我们送去「安装未知应用」设置页，回来时要把没走完的安装接上。
+    // 用 Activity 的 RESUME 生命周期做触发点：比轮询权限状态省电，也比要求用户
+    // 再点一次按钮自然。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.resumePendingInstall()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

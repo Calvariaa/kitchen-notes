@@ -156,6 +156,13 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private val _updatePromptShown = MutableStateFlow(false)
     val updatePromptShown: StateFlow<Boolean> = _updatePromptShown.asStateFlow()
 
+    /**
+     * 已经下载好、但当时因为「未知来源」未授权而没能安装的 APK。
+     * 用户去系统设置开完权限回到 App 时，用它接上原来的流程 —— 否则要用户
+     * 再点一次「下载并安装」，而文件其实已经躺在磁盘上了。
+     */
+    private var pendingApk: File? = null
+
     // ---------------------------------------------------------------- 启动
 
     fun boot() {
@@ -458,15 +465,40 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
 
                 val ok = withContext(Dispatchers.Main) { UpdateInstaller.install(ctx, apk) }
                 if (ok) {
+                    pendingApk = null
                     _updateMessage.value = UiText.of(R.string.update_download_done)
                     // 安装器已经拿起文件，App 可能马上被替换；这里不主动删文件
                 } else {
-                    _updateMessage.value = UiText.of(R.string.update_install_failed)
+                    // 最常见的原因是未知来源未授权，文件留着等用户授权回来
+                    pendingApk = apk
+                    _updateMessage.value = UiText.of(R.string.update_install_blocked)
                 }
             } catch (e: UpdateError) {
                 _updateMessage.value = e.toUiText()
             } finally {
                 _updateProgress.value = -1
+            }
+        }
+    }
+
+    /**
+     * 用户从「安装未知应用」设置页返回时调用。
+     *
+     * 如果上次卡在权限上、且现在已授权，就直接接上安装 —— 不重新下载。
+     */
+    fun resumePendingInstall() {
+        val apk = pendingApk ?: return
+        val ctx = app.baseContext
+        if (!UpdateInstaller.canInstall(ctx)) return
+        viewModelScope.launch {
+            if (!apk.exists()) {
+                pendingApk = null
+                return@launch
+            }
+            val ok = withContext(Dispatchers.Main) { UpdateInstaller.install(ctx, apk) }
+            if (ok) {
+                pendingApk = null
+                _updateMessage.value = UiText.of(R.string.update_download_done)
             }
         }
     }
