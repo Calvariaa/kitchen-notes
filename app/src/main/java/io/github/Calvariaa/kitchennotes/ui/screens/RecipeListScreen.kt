@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +62,8 @@ import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.ui.i18n.text
 import io.github.Calvariaa.kitchennotes.update.UpdateInfo
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
+import io.github.Calvariaa.kitchennotes.ui.SortDialog
+import io.github.Calvariaa.kitchennotes.ui.components.DrawerMenuButton
 import io.github.Calvariaa.kitchennotes.ui.components.EmptyRecipes
 import io.github.Calvariaa.kitchennotes.ui.components.RecipeCard
 
@@ -90,9 +93,11 @@ fun RecipeListScreen(
     val update by vm.update.collectAsStateWithLifecycle()
     val updatePromptShown by vm.updatePromptShown.collectAsStateWithLifecycle()
 
-    // query / activeTag 是 ViewModel 里的普通 mutableState，读它们即可触发重组
+    // query / activeTag / sort 是 ViewModel 里的普通 mutableState，读它们即可触发重组
     val visible = vm.visibleRecipes
     val tags = vm.allTags
+
+    var sortDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -122,7 +127,14 @@ fun RecipeListScreen(
                         }
                     }
                 },
+                navigationIcon = { DrawerMenuButton() },
                 actions = {
+                    IconButton(onClick = { sortDialog = true }) {
+                        Icon(
+                            Icons.Filled.SwapVert,
+                            contentDescription = stringResource(R.string.sort_label),
+                        )
+                    }
                     IconButton(onClick = { vm.runSync() }, enabled = !syncing) {
                         if (syncing) {
                             CircularProgressIndicator(
@@ -322,5 +334,13 @@ fun RecipeListScreen(
                 }
             }
         }
+    }
+
+    if (sortDialog) {
+        SortDialog(
+            current = vm.sort,
+            onPick = { vm.changeSort(it) },
+            onDismiss = { sortDialog = false },
+        )
     }
 }

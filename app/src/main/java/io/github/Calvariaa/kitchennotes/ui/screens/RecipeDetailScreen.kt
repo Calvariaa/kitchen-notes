@@ -65,6 +65,7 @@ import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.Recipe
 import io.github.Calvariaa.kitchennotes.data.Step
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
+import io.github.Calvariaa.kitchennotes.ui.CookedHistorySection
 import io.github.Calvariaa.kitchennotes.ui.components.DifficultyDots
 import io.github.Calvariaa.kitchennotes.ui.components.SectionTitle
 import io.github.Calvariaa.kitchennotes.ui.components.SoftBox
@@ -87,6 +88,7 @@ fun RecipeDetailScreen(
     recipeId: String,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
+    onOpenMenu: (String) -> Unit = {},
 ) {
     val recipes by vm.recipes.collectAsState()
     val recipe = recipes.firstOrNull { it.id == recipeId }
@@ -371,8 +373,21 @@ fun RecipeDetailScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 )
+
+                // ---- 做过的记录（默认折叠） ----
+                CookedHistorySection(
+                    vm = vm,
+                    recipeId = recipe.id,
+                    onOpenMenu = onOpenMenu,
+                )
             }
         }
+    }
+
+    // 离开详情页时把历史清掉：它是「当前这道菜」的派生视图，
+    // 留着会让下一次打开别的菜时先闪一帧上一道菜的历史
+    androidx.compose.runtime.DisposableEffect(recipeId) {
+        onDispose { vm.clearCookedHistory() }
     }
 
     if (confirmDelete) {

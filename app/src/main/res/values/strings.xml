@@ -305,4 +305,63 @@
     <string name="settings_crash_copy">Copy log</string>
     <string name="settings_crash_clear">Clear</string>
     <string name="settings_crash_copied">Crash log copied</string>
+
+    <!-- ===== Drawer / navigation ===== -->
+    <string name="nav_recipes">Recipes</string>
+    <string name="nav_menus">Menus</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_open_drawer">Open menu</string>
+
+    <!-- ===== Meals & staples ===== -->
+    <string name="meal_breakfast">Breakfast</string>
+    <string name="meal_lunch">Lunch</string>
+    <string name="meal_dinner">Dinner</string>
+    <string name="staple_rice">Rice</string>
+    <string name="staple_noodle">Noodles</string>
+    <string name="staple_bun">Steamed buns</string>
+
+    <!-- ===== Menu list ===== -->
+    <string name="menus_title">Menus</string>
+    <string name="menus_empty_title">No meals planned yet</string>
+    <string name="menus_empty_subtitle">Pick a meal, choose the dishes, and the shopping list builds itself.</string>
+    <string name="menus_new">New meal</string>
+    <string name="menus_new_dialog_title">Which meal?</string>
+    <string name="menu_title_format">%1$s · %2$s</string>
+    <string name="menu_dishes_count">%1$d dishes</string>
+    <string name="menu_avg_rating">%1$s avg</string>
+    <string name="menu_no_rating">Not rated</string>
+    <string name="menu_no_dishes">No dishes picked yet</string>
+
+    <!-- ===== Menu editor ===== -->
+    <string name="menu_section_date">Date &amp; meal</string>
+    <string name="menu_section_staples">Staples</string>
+    <string name="menu_section_dishes">Dishes</string>
+    <string name="menu_section_ingredients">Shopping list</string>
+    <string name="menu_section_note">Note</string>
+    <string name="menu_note_placeholder">Anything worth remembering about this meal</string>
+    <string name="menu_ingredients_empty">Pick some dishes and their ingredients show up here.</string>
+    <string name="menu_ingredients_count">%1$d ingredients</string>
+    <string name="menu_pick_dishes">Pick dishes</string>
+    <string name="menu_no_recipes">Add a recipe first, then you can put it on a menu.</string>
+    <string name="menu_rate_hint">Tap a star to rate — optional</string>
+    <string name="menu_rated_at">Rated %1$s</string>
+    <string name="menu_clear_rating">Clear rating</string>
+    <string name="menu_delete">Delete this meal</string>
+    <string name="menu_delete_body">Delete “%1$s”? The recipes themselves are untouched.</string>
+    <string name="menu_back">Back to menus</string>
+
+    <!-- ===== Sort ===== -->
+    <string name="sort_label">Sort</string>
+    <string name="sort_dialog_title">Sort recipes by</string>
+    <string name="sort_updated">Recently edited</string>
+    <string name="sort_created">Recently added</string>
+    <string name="sort_title">Name (A–Z)</string>
+    <string name="sort_difficulty">Easiest first</string>
+    <string name="sort_last_cooked">Last cooked</string>
+
+    <!-- ===== Cooked history (recipe detail) ===== -->
+    <string name="detail_history_title">Cooked before</string>
+    <string name="detail_history_count">%1$d times</string>
+    <string name="detail_history_empty">Not cooked yet — it will show up here once it lands on a menu.</string>
+    <string name="menu_date_today">Today</string>
 </resources>

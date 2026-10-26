@@ -55,6 +55,8 @@ app/src/main/java/io/github/Calvariaa/kitchennotes/
 ├── data/
 │   ├── Recipe.kt           菜谱模型
 │   ├── RecipeRepository.kt 一菜一文件读写 + 内容散列图片存储 + Paths
+│   ├── Menu.kt             菜单模型（MealSlot / Staple / MenuItem / RecipeSort）
+│   ├── MenuRepository.kt   一餐一文件 + 打分 + 做过的记录反查
 │   ├── SettingsStore.kt    设置 / 身份 / 家庭组，JSON 文件
 │   └── ImageIngestor.kt    压缩 + EXIF 方向校正
 ├── sync/
@@ -68,10 +70,14 @@ app/src/main/java/io/github/Calvariaa/kitchennotes/
 │   ├── UpdateChecker.kt    GitHub Releases 查询 + 版本比较 + APK 下载/校验
 │   └── UpdateInstaller.kt  FileProvider + ACTION_VIEW 拉起系统安装器
 └── ui/
-    ├── KitchenNotesAppUi.kt  NavHost + 主题 + 语言覆盖
+    ├── KitchenNotesAppUi.kt  NavHost + 主题 + 语言覆盖 + 抽屉外壳
     ├── DishViewModel.kt      全部状态
+    ├── MenuFormat.kt         日期/餐次/标题的本地化渲染（Composable）
+    ├── CookedHistorySection.kt 详情页可折叠「做过的记录」+ SortDialog
     ├── i18n/                 AppLanguage / UiText（资源 id + 参数）
-    ├── components/RecipeCard.kt
+    ├── components/
+    │   ├── RecipeCard.kt
+    │   └── AppDrawer.kt      ModalNavigationDrawer + LocalOpenDrawer
     └── theme/                8 套配色 Palette.kt + Theme.kt
 ```
 
@@ -81,6 +87,8 @@ app/src/main/java/io/github/Calvariaa/kitchennotes/
 filesDir/store/
   repo/                        git 工作区
     dishes/<uuid>.json         一菜一文件（合并粒度 = 文件）
+    menus/<uuid>.json          一顿饭一条记录（含打分），同样一文件一餐
+    menus/.gitkeep             空目录占位，git 不跟踪空目录
     images/yyyy/MM/<sha8>.jpg  内容散列命名，天然去重
     .git/
   grocery.git/                 主机裸仓库（成员 push 到这里）
@@ -94,6 +102,8 @@ filesDir/store/
 - 成员：`fetch → 本地 commit → merge（冲突按 updatedAt 取新） → push`。
 - 主机自己编辑时：commit 后 `pushWorkspaceToBare`；成员 push 后 JGit 的 `postReceive` 钩子后台 `pullBareIntoWorkspace`。
 - **主机和成员走两条不同代码路径**：主机不能走 `SyncClient.sync` 的网络分支，会自己连自己把仓库锁死。
+- 菜谱（`dishes/`）和菜单（`menus/`）在同一个 git 工作区里，一次 `commitAll` 同时提交两边 ——
+  不需要为菜单另加同步逻辑，它天然跟着现有链路走。
 
 ## i18n
 
@@ -106,6 +116,10 @@ filesDir/store/
   ViewModel 另给一个布尔/枚举字段（如 `aiTestOk`）。
 - 数据层不拼人话：`Recipe.ingredientPreviewParts()` 只返回「前 N 个名字 + 剩余数量」，
   「等 N 种」/「+N more」由 UI 用资源拼。
+- 菜单标题/简介**不落盘**：`Menu` 只存 `date` + `slot` + `staples` + `items`，
+  标题由 `ui/MenuFormat.kt` 的 `menuTitle()` 拼。存下来的标题在切语言后会变成冻结的中文。
+- 日期 pattern 必须按语言分支：中文的 `MMM` 本身就是「10月」，用 `"MMM d"` 会渲染出
+  「10月 26」这种倒装。中文走 `"M月d日"`，英文走 `"MMM d"`。
 
 ## 应用内更新
 
@@ -178,6 +192,24 @@ filesDir/store/
     不依赖 `.git`。`ensureIdentity` 里 `runCatching` 掉 `ensureInitialized`，
     失败只记 log —— 否则一次 JGit 抽风就把用户永久挡在引导页。
 
+17. **`var sort` + `fun setSort(...)` 会撞 JVM 签名**（`Platform declaration clash`）。
+    Kotlin 为 `var` 生成的 setter 就是 `setSort(RecipeSort)`，和手写的完全同签名。
+    换名字（`changeSort`）比加 `@JvmName` 干净。同类风险见第 7 条的 `query`/`searchQuery`。
+
+18. **NavHost 只能有一个实例。** 曾写成
+    `if (一级页) AppDrawer { NavHost() } else NavHost()`，进出二级页时整棵 NavHost
+    被销毁重建，返回栈直接丢失。正确做法是 NavHost 固定是 child，
+    抽屉是**始终存在**的外壳，二级页只靠 `gesturesEnabled = false` 关掉边缘手势。
+    抽屉高亮从 `nav.currentBackStackEntryAsState()` 派生，不另建真值源。
+
+19. **写状态要先改内存再异步落盘。** `_menus` 是所有读菜单代码的唯一真值源。
+    如果先落盘再回头 `reload()`，中间窗口期读到旧数据：连点两颗星时第二次会用
+    第一次之前的 `items` 做基把前一次覆盖掉；新建菜单后立刻导航到编辑页会查不到而闪转圈。
+    统一走 `DishViewModel.mutateMenu()`，落盘失败再把内存回滚成磁盘真实状态。
+
+20. **抽屉的 `popUpTo` 不能把 LIST 一起弹掉。** 设置页不挂抽屉，但它的返回箭头仍要能
+    退回列表；`popUpTo(LIST) { inclusive = true }` 会让那个箭头点了没反应。
+
 ## 权限
 
 `INTERNET`、`ACCESS_NETWORK_STATE`、`ACCESS_WIFI_STATE`、`REQUEST_INSTALL_PACKAGES`（应用内更新）。
@@ -188,8 +220,10 @@ filesDir/store/
 
 ## 约定
 
-- 提交信息格式 `recipe:add|edit|delete <id>` / `recipe:sync <ts>` / `merge: ...`；
+- 提交信息格式 `recipe:add|edit|delete <id>` / `recipe:sync <ts>` / `menu:rate|delete <id>` / `merge: ...`；
   给 CI 的发布说明用的门面提交请走 conventional commit（`feat:` / `fix:` / `ui:` …）
-- 删除是逻辑删除（写 `deleted: true` 墓碑），不删文件
+- 删除是逻辑删除（写 `deleted: true` 墓碑），不删文件（菜谱与菜单都是）
 - 图片按 SHA-256 前 8 字节命名，重复上传不新增对象
 - 代码注释解释「为什么」，不复述「做了什么」
+- 菜单里的材料汇总**不做用量算术**：单位不统一（克/勺/适量/半个），
+  同名材料的多个用量并列显示（`300g + 200g`），算错比不算更糟

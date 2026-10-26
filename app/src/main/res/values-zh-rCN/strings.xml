@@ -302,4 +302,63 @@
     <string name="settings_crash_copy">复制日志</string>
     <string name="settings_crash_clear">清空</string>
     <string name="settings_crash_copied">崩溃日志已复制</string>
+
+    <!-- ===== 抽屉导航 ===== -->
+    <string name="nav_recipes">菜谱</string>
+    <string name="nav_menus">菜单</string>
+    <string name="nav_settings">设置</string>
+    <string name="nav_open_drawer">打开侧栏</string>
+
+    <!-- ===== 餐次与主食 ===== -->
+    <string name="meal_breakfast">早餐</string>
+    <string name="meal_lunch">午餐</string>
+    <string name="meal_dinner">晚餐</string>
+    <string name="staple_rice">米饭</string>
+    <string name="staple_noodle">面</string>
+    <string name="staple_bun">馒头</string>
+
+    <!-- ===== 菜单列表 ===== -->
+    <string name="menus_title">菜单</string>
+    <string name="menus_empty_title">还没有安排过饭</string>
+    <string name="menus_empty_subtitle">选一顿饭、勾几道菜，材料会自动汇总。</string>
+    <string name="menus_new">记一顿饭</string>
+    <string name="menus_new_dialog_title">哪一顿？</string>
+    <string name="menu_title_format">%1$s · %2$s</string>
+    <string name="menu_dishes_count">%1$d 道菜</string>
+    <string name="menu_avg_rating">均分 %1$s</string>
+    <string name="menu_no_rating">未评分</string>
+    <string name="menu_no_dishes">还没勾菜</string>
+
+    <!-- ===== 菜单编辑 ===== -->
+    <string name="menu_section_date">日期与餐次</string>
+    <string name="menu_section_staples">主食</string>
+    <string name="menu_section_dishes">菜品</string>
+    <string name="menu_section_ingredients">需要买的材料</string>
+    <string name="menu_section_note">备注</string>
+    <string name="menu_note_placeholder">这顿饭有什么想记的</string>
+    <string name="menu_ingredients_empty">勾几道菜，材料会出现在这里。</string>
+    <string name="menu_ingredients_count">%1$d 种材料</string>
+    <string name="menu_pick_dishes">选菜</string>
+    <string name="menu_no_recipes">先去加几道菜谱，才能排进菜单。</string>
+    <string name="menu_rate_hint">点星星打分，可以不打</string>
+    <string name="menu_rated_at">%1$s 打分</string>
+    <string name="menu_clear_rating">取消评分</string>
+    <string name="menu_delete">删除这顿饭</string>
+    <string name="menu_delete_body">删除「%1$s」？菜谱本身不受影响。</string>
+    <string name="menu_back">返回菜单</string>
+
+    <!-- ===== 排序 ===== -->
+    <string name="sort_label">排序</string>
+    <string name="sort_dialog_title">按什么排</string>
+    <string name="sort_updated">最近编辑</string>
+    <string name="sort_created">最近添加</string>
+    <string name="sort_title">名称首字母</string>
+    <string name="sort_difficulty">难度从易到难</string>
+    <string name="sort_last_cooked">最近做过</string>
+
+    <!-- ===== 做过的记录（菜谱详情） ===== -->
+    <string name="detail_history_title">做过的记录</string>
+    <string name="detail_history_count">做过 %1$d 次</string>
+    <string name="detail_history_empty">还没做过。排进菜单之后，做过的日子会记在这里。</string>
+    <string name="menu_date_today">今天</string>
 </resources>

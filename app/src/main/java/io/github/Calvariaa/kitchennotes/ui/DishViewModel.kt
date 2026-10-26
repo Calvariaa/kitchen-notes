@@ -16,11 +16,17 @@ import io.github.Calvariaa.kitchennotes.ai.ImagePayload
 import io.github.Calvariaa.kitchennotes.ai.RecipeAssembler
 import io.github.Calvariaa.kitchennotes.ai.RecipeJsonRepair
 import io.github.Calvariaa.kitchennotes.data.AppSettings
+import io.github.Calvariaa.kitchennotes.data.CookedRecord
 import io.github.Calvariaa.kitchennotes.data.DiscoveredHost
 import io.github.Calvariaa.kitchennotes.data.FamilyGroup
 import io.github.Calvariaa.kitchennotes.data.ImageIngestor
+import io.github.Calvariaa.kitchennotes.data.MealSlot
+import io.github.Calvariaa.kitchennotes.data.Menu
+import io.github.Calvariaa.kitchennotes.data.MenuItem
 import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.Recipe
+import io.github.Calvariaa.kitchennotes.data.RecipeSort
+import io.github.Calvariaa.kitchennotes.data.Staple
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import io.github.Calvariaa.kitchennotes.data.sharedJson
 import io.github.Calvariaa.kitchennotes.sync.GitServerHost
@@ -33,12 +39,20 @@ import io.github.Calvariaa.kitchennotes.update.UpdateError
 import io.github.Calvariaa.kitchennotes.update.UpdateInfo
 import io.github.Calvariaa.kitchennotes.update.UpdateInstaller
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+/** 菜单里聚合后的一行材料：名字 + 各道菜给出的用量（去重后并列） */
+data class MenuIngredient(
+    val name: String,
+    val amounts: List<String>,
+)
 
 /**
  * 全局状态。单例（由 Activity 持有并复用同一个实例）。
@@ -76,6 +90,22 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     var activeTag by mutableStateOf<String?>(null)
         private set
 
+    var sort by mutableStateOf(RecipeSort.UPDATED)
+        private set
+
+    // ---------------------------------------------------------------- 菜单
+
+    private val _menus = MutableStateFlow<List<Menu>>(emptyList())
+    val menus: StateFlow<List<Menu>> = _menus.asStateFlow()
+
+    /** recipeId -> 最近一次被做的日期，列表排序「按最近做过」用 */
+    private val _lastCooked = MutableStateFlow<Map<String, String>>(emptyMap())
+    val lastCooked: StateFlow<Map<String, String>> = _lastCooked.asStateFlow()
+
+    /** 详情页底部「做过的记录」：当前打开的菜谱的历史 */
+    private val _cookedHistory = MutableStateFlow<List<CookedRecord>>(emptyList())
+    val cookedHistory: StateFlow<List<CookedRecord>> = _cookedHistory.asStateFlow()
+
     /** 设置在「加入家庭组」按钮上，导航层据此跳页；用完即重置 */
     var joinFlow by mutableStateOf(false)
 
@@ -86,10 +116,40 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     val visibleRecipes: List<Recipe>
         get() {
             val q = searchQuery.trim().lowercase()
-            return _recipes.value.filter { r ->
+            val filtered = _recipes.value.filter { r ->
                 (activeTag == null || r.tags.contains(activeTag)) &&
                     (q.isBlank() || r.searchBlob().contains(q))
             }
+            return sortRecipes(filtered, sort, _lastCooked.value)
+        }
+
+    /**
+     * 排序。中文按拼音：直接用 [java.text.Collator] 的 CHINA 区域，它认拼音顺序，
+     * 而 `sortedBy { it.title }` 是按 UTF-16 code unit 排，中文会变成一堆乱序。
+     * 英文界面下同一个 Collator 也能正确排 A-Z（不区分大小写）。
+     */
+    private fun sortRecipes(
+        list: List<Recipe>,
+        sort: RecipeSort,
+        lastCooked: Map<String, String>,
+    ): List<Recipe> = when (sort) {
+        RecipeSort.UPDATED -> list.sortedByDescending { it.updatedAt }
+        RecipeSort.CREATED -> list.sortedByDescending { it.createdAt }
+        // Collator 构造要读 locale 数据，不为每帧新建一个
+        RecipeSort.TITLE -> list.sortedWith { a, b -> titleCollator.compare(a.title, b.title) }
+        RecipeSort.DIFFICULTY -> list.sortedWith(
+            compareBy<Recipe> { it.difficulty }.thenBy { it.title },
+        )
+        // 没做过的排最后：倒序时给空串，它比任何 yyyy-MM-dd 都小
+        RecipeSort.LAST_COOKED -> list.sortedWith(
+            compareByDescending<Recipe> { lastCooked[it.id].orEmpty() }
+                .thenByDescending { it.updatedAt },
+        )
+    }
+
+    private val titleCollator: java.text.Collator =
+        java.text.Collator.getInstance(java.util.Locale.CHINA).apply {
+            strength = java.text.Collator.PRIMARY
         }
 
     // ---------------------------------------------------------------- 设置与同步
@@ -236,7 +296,37 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) { app.recipes.all() }
             _recipes.value = loaded
+            refreshMenus()
         }
+    }
+
+    /** 菜单与「最近做过」映射一起刷新：两者都是同一批文件的派生视图 */
+    private suspend fun refreshMenus() {
+        val menus = withContext(Dispatchers.IO) { app.menus.all() }
+        _menus.value = menus
+        refreshDerivedMenus()
+    }
+
+    /** 只重算派生视图（最近做过映射），不重读菜单本身 */
+    private suspend fun refreshDerivedMenus() {
+        _lastCooked.value = withContext(Dispatchers.IO) { app.menus.lastCookedMap() }
+    }
+
+    fun changeSort(next: RecipeSort) {
+        sort = next
+    }
+
+    /** 详情页打开时加载这道菜的烹饪历史 */
+    fun loadCookedHistory(recipeId: String) {
+        viewModelScope.launch {
+            _cookedHistory.value = withContext(Dispatchers.IO) {
+                app.menus.cookedRecordsFor(recipeId)
+            }
+        }
+    }
+
+    fun clearCookedHistory() {
+        _cookedHistory.value = emptyList()
     }
 
     fun setQuery(q: String) {
@@ -254,6 +344,161 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     }
 
     fun getRecipe(id: String): Recipe? = _recipes.value.firstOrNull { it.id == id }
+
+    // ---------------------------------------------------------------- 菜单
+
+    fun getMenu(id: String): Menu? = _menus.value.firstOrNull { it.id == id }
+
+    /** 当天日期 `yyyy-MM-dd`，新建菜单的默认值 */
+    fun today(): String = java.time.LocalDate.now().toString()
+
+    /**
+     * 菜单的统一写入口：**先改内存，再异步落盘**。
+     *
+     * 顺序不能反。`_menus` 是所有读菜单的代码（编辑页、材料汇总、getMenu）的唯一真值源，
+     * 如果先落盘再回头 reload，中间有一个窗口期读到的是旧数据：
+     *  - 连续给两道菜点星标时，第二次会拿第一次之前的 items 做基，把第一次的评分覆盖掉；
+     *  - 新建菜单后立刻导航到编辑页，`getMenu` 查不到，页面会先闪一下转圈。
+     * 内存先行对这两个问题都是根治。落盘失败时再把内存回滚成盘上的真实状态。
+     */
+    private fun mutateMenu(
+        id: String,
+        commitMessage: String? = null,
+        transform: (Menu) -> Menu,
+    ) {
+        val current = getMenu(id) ?: return
+        val next = transform(current)
+        if (next == current) return
+
+        // 1. 内存先行：之后的任何读取都能看到最新值
+        _menus.value = _menus.value
+            .map { if (it.id == id) next else it }
+            .sortedWith(menuOrder)
+
+        // 2. 异步落盘
+        viewModelScope.launch {
+            val ok = runCatching {
+                withContext(Dispatchers.IO) { app.menus.upsert(next) }
+            }.isSuccess
+            if (!ok) {
+                // 写失败就把内存退回磁盘的真实状态，别让用户对着假数据继续操作
+                refreshMenus()
+                return@launch
+            }
+            refreshDerivedMenus()
+            commitMessage?.let { commitAndPush(it) }
+        }
+    }
+
+    /** 菜单列表的排序规则，和 [MenuRepository.all] 保持一致 */
+    private val menuOrder: Comparator<Menu> =
+        compareByDescending<Menu> { it.date }.thenByDescending { it.slot.ordinal }
+
+    fun createMenu(slot: MealSlot, date: String = today()): String {
+        val id = app.menus.newId()
+        val now = System.currentTimeMillis()
+        val menu = Menu(id = id, date = date, slot = slot, createdAt = now, updatedAt = now)
+        // 同步入内存，调用方紧接着导航到编辑页时能立刻查到
+        _menus.value = (_menus.value + menu).sortedWith(menuOrder)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { app.menus.upsert(menu) }
+        }
+        return id
+    }
+
+    fun saveMenu(menu: Menu, commitMessage: String? = null) {
+        mutateMenu(menu.id, commitMessage) { menu }
+    }
+
+    /** 勾选/取消一道菜。新加入的条目从菜谱取标题快照 */
+    fun toggleMenuRecipe(menuId: String, recipeId: String) {
+        val title = getRecipe(recipeId)?.title.orEmpty()
+        mutateMenu(menuId) { menu ->
+            val next = if (menu.items.any { it.recipeId == recipeId }) {
+                menu.items.filterNot { it.recipeId == recipeId }
+            } else {
+                menu.items + MenuItem(recipeId = recipeId, title = title)
+            }
+            menu.copy(items = next, updatedAt = System.currentTimeMillis())
+        }
+    }
+
+    fun setMenuSlot(menuId: String, slot: MealSlot) =
+        mutateMenu(menuId) { it.copy(slot = slot, updatedAt = System.currentTimeMillis()) }
+
+    fun setMenuDate(menuId: String, date: String) =
+        mutateMenu(menuId) { it.copy(date = date, updatedAt = System.currentTimeMillis()) }
+
+    fun setMenuNote(menuId: String, note: String) {
+        // 备注是自由文本，用户会一个字一个字地敲。走 mutateMenu 会把每个按键都变成
+        // 一次「写临时文件 + fd.sync() + rename」，中文输入法下几十毫秒一次，
+        // 打字会明显卡顿且疯狂磨损闪存。
+        // 所以内存立刻更新（输入框不会掉字），落盘防抖到停顿之后一次。
+        val current = getMenu(menuId) ?: return
+        val next = current.copy(note = note, updatedAt = System.currentTimeMillis())
+        _menus.value = _menus.value.map { if (it.id == menuId) next else it }
+
+        noteSaveJob?.cancel()
+        noteSaveJob = viewModelScope.launch {
+            delay(NOTE_SAVE_DEBOUNCE_MS)
+            withContext(Dispatchers.IO) { app.menus.upsert(next) }
+        }
+    }
+
+    private var noteSaveJob: Job? = null
+
+    fun toggleMenuStaple(menuId: String, staple: Staple) = mutateMenu(menuId) { menu ->
+        val next = if (menu.staples.contains(staple)) menu.staples - staple else menu.staples + staple
+        menu.copy(staples = next, updatedAt = System.currentTimeMillis())
+    }
+
+    /**
+     * 打分。0 = 取消评分。
+     *
+     * 走 [mutateMenu] 是为了防连点丢分：用户在几颗星之间连点，
+     * 每次都必须基于上一次的结果，而不是同一份旧快照。
+     */
+    fun rateMenuItem(menuId: String, recipeId: String, rating: Int) {
+        mutateMenu(menuId, commitMessage = "menu:rate $menuId") { menu ->
+            menu.withItemRating(recipeId, rating, System.currentTimeMillis())
+        }
+        // 详情页底部「做过的记录」显示的就是这个评分，要跟着刷新
+        viewModelScope.launch {
+            _cookedHistory.value = withContext(Dispatchers.IO) {
+                app.menus.cookedRecordsFor(recipeId)
+            }
+        }
+    }
+
+    fun deleteMenu(menu: Menu) {
+        _menus.value = _menus.value.filterNot { it.id == menu.id }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { app.menus.softDelete(menu.id) }
+            refreshDerivedMenus()
+            commitAndPush("menu:delete ${menu.id}")
+        }
+    }
+
+    /**
+     * 一顿饭需要的材料，按名字聚合。
+     *
+     * 同一道菜重复出现（不该发生，勾选是集合语义）和不同菜用同一种料都会合并，
+     * 用量不在这里做「300g + 200g = 500g」的算术 —— 单位不统一（克/勺/适量/半个），
+     * 算错了比不算更糟。这里只把同名的用量并排列出，让人自己看总量。
+     */
+    fun menuIngredients(menu: Menu): List<MenuIngredient> {
+        val byName = linkedMapOf<String, MutableList<String>>()
+        menu.items.forEach { item ->
+            val recipe = getRecipe(item.recipeId) ?: return@forEach
+            recipe.ingredients.forEach { ing ->
+                val amounts = byName.getOrPut(ing.name.trim()) { mutableListOf() }
+                if (ing.amount.isNotBlank()) amounts += ing.amount.trim()
+            }
+        }
+        return byName.map { (name, amounts) ->
+            MenuIngredient(name = name, amounts = amounts.distinct())
+        }
+    }
 
     // ---------------------------------------------------------------- 编辑
 
@@ -755,5 +1000,10 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     class Factory(private val app: AppGraph) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = DishViewModel(app) as T
+    }
+
+    private companion object {
+        /** 备注落盘防抖：等到用户停顿这么久再写一次 */
+        const val NOTE_SAVE_DEBOUNCE_MS = 500L
     }
 }

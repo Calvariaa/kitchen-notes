@@ -72,6 +72,11 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
         )
         Paths.dishesDir(ctx)
         Paths.imagesDir(ctx)
+        // 菜单目录同样要在首次初始化时就建好。git 不跟踪空目录，所以塞一个 .gitkeep，
+        // 否则「一道菜单都没记」的仓库 clone 下来没有 menus/ 目录，
+        // 与主机端布局不一致，排查同步问题时容易误判。
+        File(Paths.repo(ctx), "menus").mkdirs()
+        File(Paths.repo(ctx), "menus/.gitkeep").takeIf { !it.exists() }?.writeText("")
     }
 
     // ------------------------------------------------------------ 本地提交

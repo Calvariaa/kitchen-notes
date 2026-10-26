@@ -34,6 +34,10 @@ class AppGraph(private val app: Application) {
 
     val settings = SettingsStore(app)
     val recipes = RecipeRepository(app)
+
+    /** 菜单（一顿饭的记录，含打分）。和菜谱一样落在 repo/ 下，跟着 git 同步 */
+    val menus = io.github.Calvariaa.kitchennotes.data.MenuRepository(app)
+
     val gitRepo = GitRepo(app, recipes)
     val hostRepository = HostRepository(app, settings)
     val lanDiscovery = LanDiscovery(app, settings)
