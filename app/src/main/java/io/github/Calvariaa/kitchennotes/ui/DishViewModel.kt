@@ -110,18 +110,36 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     var joinFlow by mutableStateOf(false)
 
     val allTags: List<String>
-        get() = _recipes.value.flatMap { it.tags }.groupingBy { it }.eachCount()
-            .entries.sortedByDescending { it.value }.map { it.key }.take(12)
+        get() = tagsOf(_recipes.value)
 
     val visibleRecipes: List<Recipe>
-        get() {
-            val q = searchQuery.trim().lowercase()
-            val filtered = _recipes.value.filter { r ->
-                (activeTag == null || r.tags.contains(activeTag)) &&
-                    (q.isBlank() || r.searchBlob().contains(q))
-            }
-            return sortRecipes(filtered, sort, _lastCooked.value)
+        get() = visibleRecipesOf(_recipes.value, _lastCooked.value)
+
+    /**
+     * 标签榜。**入参必须由调用方传入**，理由见 [visibleRecipesOf]。
+     */
+    fun tagsOf(all: List<Recipe>): List<String> = all
+        .flatMap { it.tags }.groupingBy { it }.eachCount()
+        .entries.sortedByDescending { it.value }.map { it.key }.take(12)
+
+    /**
+     * 搜索 + 标签 + 排序三段合成。
+     *
+     * `recipes` 和 `lastCooked` 是入参而不是内部取 `_recipes.value`：
+     * StateFlow 的 `.value` 不是 Compose 快照状态，读它**不会**建立订阅。
+     * 之前写成无参 getter 时，新建菜谱 → `_recipes` 更新 → 列表页不重组，
+     * 表现为「保存后返回列表看不到新菜，随便点进别的页面再回来才出现」。
+     * 现在由 UI 把 `collectAsStateWithLifecycle()` 拿到的列表传进来，
+     * 读取发生在组合里，依赖关系就成立了。
+     */
+    fun visibleRecipesOf(all: List<Recipe>, lastCooked: Map<String, String>): List<Recipe> {
+        val q = searchQuery.trim().lowercase()
+        val filtered = all.filter { r ->
+            (activeTag == null || r.tags.contains(activeTag)) &&
+                (q.isBlank() || r.searchBlob().contains(q))
         }
+        return sortRecipes(filtered, sort, lastCooked)
+    }
 
     /**
      * 排序。中文按拼音：直接用 [java.text.Collator] 的 CHINA 区域，它认拼音顺序，
@@ -486,10 +504,11 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
      * 用量不在这里做「300g + 200g = 500g」的算术 —— 单位不统一（克/勺/适量/半个），
      * 算错了比不算更糟。这里只把同名的用量并排列出，让人自己看总量。
      */
-    fun menuIngredients(menu: Menu): List<MenuIngredient> {
+    fun menuIngredients(menu: Menu, recipes: List<Recipe>): List<MenuIngredient> {
+        val byId = recipes.associateBy { it.id }
         val byName = linkedMapOf<String, MutableList<String>>()
         menu.items.forEach { item ->
-            val recipe = getRecipe(item.recipeId) ?: return@forEach
+            val recipe = byId[item.recipeId] ?: return@forEach
             recipe.ingredients.forEach { ing ->
                 val amounts = byName.getOrPut(ing.name.trim()) { mutableListOf() }
                 if (ing.amount.isNotBlank()) amounts += ing.amount.trim()

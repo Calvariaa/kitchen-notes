@@ -342,6 +342,8 @@
     <string name="menu_ingredients_empty">Pick some dishes and their ingredients show up here.</string>
     <string name="menu_ingredients_count">%1$d ingredients</string>
     <string name="menu_pick_dishes">Pick dishes</string>
+    <string name="menu_pick_count">%1$d picked</string>
+    <string name="menu_pick_no_match">No dish matches that.</string>
     <string name="menu_no_recipes">Add a recipe first, then you can put it on a menu.</string>
     <string name="menu_rate_hint">Tap a star to rate — optional</string>
     <string name="menu_rated_at">Rated %1$s</string>

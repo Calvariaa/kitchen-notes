@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,6 +18,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,13 +29,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -40,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -53,15 +62,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import io.github.Calvariaa.kitchennotes.R
 import io.github.Calvariaa.kitchennotes.data.MealSlot
 import io.github.Calvariaa.kitchennotes.data.MenuItem
+import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.Recipe
 import io.github.Calvariaa.kitchennotes.data.Staple
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
@@ -70,6 +86,7 @@ import io.github.Calvariaa.kitchennotes.ui.components.SoftBox
 import io.github.Calvariaa.kitchennotes.ui.formatTimestamp
 import io.github.Calvariaa.kitchennotes.ui.mealSlotLabel
 import io.github.Calvariaa.kitchennotes.ui.menuTitle
+import java.io.File
 import java.time.LocalDate
 
 /**
@@ -106,7 +123,8 @@ fun MenuEditorScreen(
         return
     }
 
-    val ingredients = vm.menuIngredients(menu)
+    // recipes 显式传入，不让 ViewModel 内部读 _recipes.value — 见 RecipeListScreen 的注释
+    val ingredients = vm.menuIngredients(menu, recipes)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -452,7 +470,20 @@ private fun MenuItemCard(
     }
 }
 
-/** 选菜弹窗：勾选式，不关闭，勾完点完成 */
+/**
+ * 选菜弹窗：缩略图网格 + 顶部搜索，边勾边生效，点完成关闭。
+ *
+ * 为什么不是 AlertDialog 加一列 Checkbox：菜谱多了以后一屏只放得下七八行，
+ * 而人对「哪道菜」的识别主要靠图不是靠字。改成小卡片网格后一屏能看到 12–15 道，
+ * 而且缩略图直接就是列表页那张封面，两处视觉记忆能对上。
+ *
+ * 用 Dialog 而不是 AlertDialog：AlertDialog 的正文宽度被平台默认宽度压住
+ * （手机竖屏约 280dp），三列网格每格只剩 80dp 出头，图会小到没意义。
+ * usePlatformDefaultWidth = false 才能拿到接近全屏的宽度。
+ *
+ * 勾选是即时提交（每次点击回调给 ViewModel），所以这里没有「取消」——
+ * 用户勾错了直接再点一下取消勾选即可，不需要撤销语义。空勾选态下按返回也能退出。
+ */
 @Composable
 private fun DishPickerDialog(
     recipes: List<Recipe>,
@@ -460,45 +491,210 @@ private fun DishPickerDialog(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(recipes, query) {
+        val q = query.trim().lowercase()
+        if (q.isBlank()) recipes else recipes.filter { it.searchBlob().contains(q) }
+    }
+
+    // LocalContext.current 必须在组合上下文里读，不能塞进 remember 的 lambda
+    val context = LocalContext.current
+    val repoRoot = remember(context) { Paths.repo(context.applicationContext) }
+
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.menu_pick_dishes)) },
-        text = {
-            if (recipes.isEmpty()) {
-                Text(stringResource(R.string.menu_no_recipes))
-            } else {
-                Column(
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                // 上限 560dp 而不是铺满：网格在小屏上过高时，标题和搜索框会被
+                // 推到视觉重心之外，而这里最该一眼看到的是菜。
+                .heightIn(max = 560.dp)
+                // 搜索框获得焦点后键盘会盖住下半屏，imePadding 让网格自然收缩
+                .imePadding(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+            Column(modifier = Modifier.padding(vertical = 16.dp)) {
+                Row(
                     modifier = Modifier
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    recipes.forEach { recipe ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onToggle(recipe.id) }
-                                .padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
+                    Text(
+                        text = stringResource(R.string.menu_pick_dishes),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (selected.isNotEmpty()) {
+                        Text(
+                            text = stringResource(R.string.menu_pick_count, selected.size),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp),
+                    placeholder = { Text(stringResource(R.string.list_search_placeholder)) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = null)
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                when {
+                    recipes.isEmpty() -> PickerHint(stringResource(R.string.menu_no_recipes))
+                    filtered.isEmpty() -> PickerHint(stringResource(R.string.menu_pick_no_match))
+                    else -> LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 96.dp),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) {
+                        items(filtered, key = { it.id }) { recipe ->
+                            PickCard(
+                                recipe = recipe,
+                                coverFile = recipe.coverImage.takeIf { it.isNotBlank() }
+                                    ?.let { File(repoRoot, it) }?.takeIf { it.exists() },
                                 checked = selected.contains(recipe.id),
-                                onCheckedChange = { onToggle(recipe.id) },
-                            )
-                            Text(
-                                text = recipe.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                onClick = { onToggle(recipe.id) },
                             )
                         }
                     }
                 }
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.action_done))
+                    }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_done))
+        }
+    }
+}
+
+/** 一张可选的小卡片：正方形缩略图 + 一行菜名，右上角勾选角标 */
+@Composable
+private fun PickCard(
+    recipe: Recipe,
+    coverFile: File?,
+    checked: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(modifier = Modifier.clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                // 选中态用描边而不是改底色：底色一变，图的观感也跟着变
+                .then(
+                    if (checked) {
+                        Modifier.border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(14.dp),
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (coverFile != null) {
+                AsyncImage(
+                    model = coverFile,
+                    contentDescription = recipe.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    Icons.Filled.Restaurant,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.size(28.dp),
+                )
             }
-        },
-    )
+
+            // 角标放在图片容器内，clip 之后仍然会被圆角裁掉，所以单独加在 Box 之后不行。
+            // 用 align(Alignment.TopEnd) 并留 4dp 内边距即可落在圆角内侧。
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (checked) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (checked) Icons.Filled.Check else Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = if (checked) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = recipe.title,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (checked) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        )
+    }
+}
+
+@Composable
+private fun PickerHint(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
 }

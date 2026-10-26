@@ -218,6 +218,24 @@ filesDir/store/
     窄栏还要单独降级表头（头像 44→32dp、`titleMedium`→`titleSmall`、隐藏副标题），
     否则副标题会把标题挤断行。
 
+22. **StateFlow 的 `.value` 不是 Compose 快照状态，读它不建立订阅。**
+    ViewModel 里写成无参 getter 的派生属性（`val visibleRecipes get() = _recipes.value...`）
+    在组合里读到的值不会随 `_recipes` 变化触发重组。表现很迷惑：
+    **新建菜谱 → 保存返回列表 → 看不到新菜，随便点进别的页面再回来就出现了**。
+    因为「点进别的页面」引发了无关的重组，才顺带把旧 getter 重算了一遍。
+    正确做法是让派生函数**接收列表作参数**（`visibleRecipesOf(recipes, lastCooked)`），
+    UI 侧把 `collectAsStateWithLifecycle()` 拿到的值传进去 —— 读取发生在组合里，依赖才成立。
+    同类问题会出现在任何「UI 调用的 VM 方法内部读 `.value`」的地方
+    （`menuIngredients` 也曾这样读 `getRecipe`）。判断标准：**这个值变了，UI 要不要重画？**
+    要，它就必须以参数或 StateFlow 的形式进入组合。
+
+23. **`AlertDialog` 的正文宽度被平台默认宽度锁死**（手机竖屏约 280dp），
+    不适合放网格。要多列布局得用 `Dialog(properties = DialogProperties(
+    usePlatformDefaultWidth = false))` + 自己的 `Surface`。
+    另外 `LocalContext.current` 必须直接在组合上下文中读，
+    写成 `remember { Paths.repo(LocalContext.current.applicationContext) }`
+    会编译失败：`@Composable invocations can only happen from ...`。
+
 ## 权限
 
 `INTERNET`、`ACCESS_NETWORK_STATE`、`ACCESS_WIFI_STATE`、`REQUEST_INSTALL_PACKAGES`（应用内更新）。

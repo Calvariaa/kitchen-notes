@@ -92,10 +92,13 @@ fun RecipeListScreen(
     val syncMessage by vm.syncMessage.collectAsStateWithLifecycle()
     val update by vm.update.collectAsStateWithLifecycle()
     val updatePromptShown by vm.updatePromptShown.collectAsStateWithLifecycle()
+    val lastCooked by vm.lastCooked.collectAsStateWithLifecycle()
 
-    // query / activeTag / sort 是 ViewModel 里的普通 mutableState，读它们即可触发重组
-    val visible = vm.visibleRecipes
-    val tags = vm.allTags
+    // 必须把 recipes / lastCooked 显式传进去，不能让 ViewModel 内部读 _recipes.value：
+    // StateFlow 的 .value 不是 Compose 快照状态，读它不建立订阅，新建菜谱后
+    // 列表不会重组（要切走再回来才刷新）。这里的 recipes 来自 collect，才是被观察的。
+    val visible = vm.visibleRecipesOf(recipes, lastCooked)
+    val tags = vm.tagsOf(recipes)
 
     var sortDialog by remember { mutableStateOf(false) }
 

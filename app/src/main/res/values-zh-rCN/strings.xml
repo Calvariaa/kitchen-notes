@@ -339,6 +339,8 @@
     <string name="menu_ingredients_empty">勾几道菜，材料会出现在这里。</string>
     <string name="menu_ingredients_count">%1$d 种材料</string>
     <string name="menu_pick_dishes">选菜</string>
+    <string name="menu_pick_count">已选 %1$d 道</string>
+    <string name="menu_pick_no_match">没有匹配的菜。</string>
     <string name="menu_no_recipes">先去加几道菜谱，才能排进菜单。</string>
     <string name="menu_rate_hint">点星星打分，可以不打</string>
     <string name="menu_rated_at">%1$s 打分</string>
