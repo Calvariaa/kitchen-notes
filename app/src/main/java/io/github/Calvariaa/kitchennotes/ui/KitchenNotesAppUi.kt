@@ -138,7 +138,11 @@ fun KitchenNotesRoot() {
             // 结果进出二级页面时整棵 NavHost 被销毁重建，返回栈直接丢失。
             // 现在固定「NavHost 一直是 child，抽屉是可选中途关闭的外壳」，
             // 二级页面只是关掉手势，内容和状态都不重建。
-            val firstLevel = currentRoute == Routes.LIST || currentRoute == Routes.MENUS
+            // 设置也是并列的一级页面：它从抽屉进来，所以同样要能拉出抽屉。
+            // 之前它是菜谱页右上角图标钻进去的二级页，那时它关着抽屉、右上角放返回箭头。
+            val firstLevel = currentRoute == Routes.LIST ||
+                currentRoute == Routes.MENUS ||
+                currentRoute == Routes.SETTINGS
 
             val headerSubtitle = group?.let {
                 when (it.role) {
@@ -188,7 +192,11 @@ private fun AppNavHost(
                 vm = vm,
                 onOpenRecipe = { id -> nav.navigate(Routes.detail(id)) },
                 onCreate = { nav.navigate(Routes.CREATE) },
-                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                // 设置页现在从抽屉进，但列表页的「有新版本」提示条也直接跳过去。
+                // 加 launchSingleTop 免得连点堆出多层设置页。
+                onOpenSettings = {
+                    nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
+                },
             )
         }
 
@@ -263,10 +271,7 @@ private fun AppNavHost(
         }
 
         composable(Routes.SETTINGS) {
-            SettingsScreen(
-                vm = vm,
-                onBack = { nav.popBackStack() },
-            )
+            SettingsScreen(vm = vm)
         }
 
         composable(Routes.JOIN) {

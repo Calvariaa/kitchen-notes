@@ -30,7 +30,6 @@
     <string name="list_role_host">Host · %1$s</string>
     <string name="list_role_member">Joined %1$s</string>
     <string name="list_sync">Sync</string>
-    <string name="list_settings">Settings</string>
     <string name="list_new_recipe">New recipe</string>
     <string name="list_search_placeholder">Search dishes, ingredients…</string>
     <string name="list_search_clear">Clear search</string>

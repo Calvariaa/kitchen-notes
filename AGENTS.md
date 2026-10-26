@@ -207,8 +207,10 @@ filesDir/store/
     第一次之前的 `items` 做基把前一次覆盖掉；新建菜单后立刻导航到编辑页会查不到而闪转圈。
     统一走 `DishViewModel.mutateMenu()`，落盘失败再把内存回滚成磁盘真实状态。
 
-20. **抽屉的 `popUpTo` 不能把 LIST 一起弹掉。** 设置页不挂抽屉，但它的返回箭头仍要能
-    退回列表；`popUpTo(LIST) { inclusive = true }` 会让那个箭头点了没反应。
+20. **抽屉的 `popUpTo` 不能把 LIST 一起弹掉。** 一级页面之间是并列关系，
+    `popUpTo(LIST) { inclusive = true }` 会把栈底清掉，返回键直接退出应用。
+    设置页现在是抽屉里的第三个一级页面（导航栏也是汉堡按钮，不再是返回箭头），
+    它的返回靠系统返回键，不靠顶栏图标。
 
 21. **`ModalDrawerSheet` 不指定宽度就接近铺满整屏。** 它只受
     `DrawerDefaults.MaximumDrawerWidth`（360dp）约束，在 411dp 的常见手机宽度上

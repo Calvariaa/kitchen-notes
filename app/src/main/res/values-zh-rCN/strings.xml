@@ -27,7 +27,6 @@
     <string name="list_role_host">主机 · %1$s</string>
     <string name="list_role_member">已加入 %1$s</string>
     <string name="list_sync">同步</string>
-    <string name="list_settings">设置</string>
     <string name="list_new_recipe">新菜谱</string>
     <string name="list_search_placeholder">找菜名、材料…</string>
     <string name="list_search_clear">清空</string>

@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
@@ -70,6 +69,7 @@ import io.github.Calvariaa.kitchennotes.ai.DeepSeekClient
 import io.github.Calvariaa.kitchennotes.data.FamilyGroup
 import io.github.Calvariaa.kitchennotes.sync.SshKeyFactory
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
+import io.github.Calvariaa.kitchennotes.ui.components.DrawerMenuButton
 import io.github.Calvariaa.kitchennotes.ui.components.SectionTitle
 import io.github.Calvariaa.kitchennotes.ui.components.SoftBox
 import androidx.lifecycle.Lifecycle
@@ -97,7 +97,6 @@ import io.github.Calvariaa.kitchennotes.ui.theme.Palette
 @OptIn(ExperimentalMaterial3Api::class)
 fun SettingsScreen(
     vm: DishViewModel,
-    onBack: () -> Unit,
 ) {
     val settings by vm.settings.collectAsState()
     val identity by vm.identity.collectAsState()
@@ -142,14 +141,7 @@ fun SettingsScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                 },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
+                navigationIcon = { DrawerMenuButton() },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
