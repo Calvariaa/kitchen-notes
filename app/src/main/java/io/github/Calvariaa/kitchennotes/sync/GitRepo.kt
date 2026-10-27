@@ -56,7 +56,11 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
                 .setGitDir(gitDir)
                 .setWorkTree(dir)
                 .build()
-            repository.create(true)
+            // 参数是 bare，不是「是否创建目录」。传 true 会把工作区仓库标成裸仓库
+            // （config 里落 bare = true），之后所有 add/commit 都抛
+            // NoWorkTreeException: Bare Repository has neither a working tree, nor an index。
+            // 表现就是「点创建家庭 → 主机起不来」，且该状态会被保存到磁盘，重装也不消失。
+            repository.create(false)
             // 在 Android 上 JGit 遇到符号链接/文件权限会报错，关掉相关假设
             repository.config.apply {
                 setBoolean("core", null, "fileMode", false)
@@ -66,6 +70,12 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
                 save()
             }
             repository.close()
+        } else {
+            // 自愈：老版本把 create(true) 当「创建目录」用，给工作区仓库写进了
+            // core.bare = true，此后 add/commit 全部抛 NoWorkTreeException，
+            // 而且这个标记会一直留在 config 里，重装 App 也不消失（files 目录不清）。
+            // 只改 bare 位，不动 objects / refs，用户数据零损失。
+            healBareFlag(gitDir, dir)
         }
         // 两张必需文件
         File(dir, ".gitattributes").takeIf { !it.exists() }?.writeText(
@@ -78,6 +88,34 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
         // 与主机端布局不一致，排查同步问题时容易误判。
         File(Paths.repo(ctx), "menus").mkdirs()
         File(Paths.repo(ctx), "menus/.gitkeep").takeIf { !it.exists() }?.writeText("")
+    }
+
+    /**
+     * 修正被误标成裸仓库的工作区仓库。
+     *
+     * `Repository.create(true)` 的第一个参数是 **bare**，不是「创建目录」。
+     * 早期代码传了 true，于是 `repo/.git/config` 里留下 `bare = true`，
+     * 之后 `git.add()` 就抛 `NoWorkTreeException: Bare Repository has neither
+     * a working tree, nor an index` —— 用户看到的是「创建家庭后主机起不来」。
+     *
+     * 这个标记写在 config 里而不是派生自目录结构，所以重装 App（不清 files）也不会自愈，
+     * 必须在每次初始化时主动纠一遍。
+     */
+    private fun healBareFlag(gitDir: File, workTree: File) {
+        runCatching {
+            FileRepositoryBuilder()
+                .setGitDir(gitDir)
+                .setWorkTree(workTree)
+                .build()
+                .use { repo ->
+                    val cfg = repo.config
+                    if (cfg.getBoolean("core", "bare", false)) {
+                        cfg.setBoolean("core", null, "bare", false)
+                        cfg.save()
+                        android.util.Log.w("GitRepo", "healed core.bare=true on work tree repo")
+                    }
+                }
+        }
     }
 
     // ------------------------------------------------------------ 本地提交

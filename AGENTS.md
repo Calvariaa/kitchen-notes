@@ -263,6 +263,51 @@ filesDir/store/
     同理，同步侧加新目录（不只是 `dishes/`）时，冲突仲裁、UI 刷新回调都要跟上，
     否则会出现「部分文件带着冲突标记被解析失败吞掉」的假丢数据。
 
+25. **`com.sun.net.httpserver.HttpServer` 在 Android 上不存在 —— 是运行时，不是编译期。**
+    它是 JDK 内部类，AGP 编译能过，`HttpServer.create()` 一执行就
+    `NoClassDefFoundError: Failed resolution of: Lcom/sun/net/httpserver/HttpServer;`。
+    又因为发生在 `viewModelScope.launch` 里没人接（见坑 15），整个进程直接崩 ——
+    用户看到的就是「点创建家庭闪退」。
+    现在用自建的 `MiniHttpServer`（`ServerSocket` + 手写 HTTP/1.1 + chunked），零依赖几十 KB。
+    判断标准：**`com.sun.*` / `sun.*` / `jdk.internal.*` 一律当不存在。**
+
+26. **`Repository.create(true)` 的第一个参数是 bare，不是「创建目录」。**
+    传 `true` 会给工作区仓库的 config 写下 `core.bare = true`，之后所有
+    `git.add()` / `commit()` 都抛
+    `NoWorkTreeException: Bare Repository has neither a working tree, nor an index`。
+    表现是「创建家庭后主机起不来」，而且**标记在磁盘上，重装 App（不清 files）也不自愈**。
+    正确写法是 `create(false)`；`ensureInitialized` 里另有 `healBareFlag()`
+    在每次初始化时主动纠正存量损坏数据（只改 bare 位，不动 objects/refs）。
+
+27. **不要试图在自建 HTTP 服务器上复用 JGit 的 `GitServlet`。**
+    它是给真实 Servlet 容器写的，两个硬障碍：
+    - `GitFilter.init()` 会**无条件**用 `FileResolver(base-path)` 覆盖外部
+      `setRepositoryResolver()` 设的解析器（`assertNotInitialized` 只拦 init 之后的调用）；
+    - glue 层的 `RepositoryFilter` 拿**整个** `getPathInfo()` 当仓库名，
+      而 `SuffixPipeline` 又拿同一个 `getPathInfo()` 做 `endsWith` 匹配 ——
+      想同时满足「名字只是 `grocery.git`」和「路径以 `/info/refs` 结尾」是不可能的。
+    正确做法是直接实现三个端点，用 `UploadPack` / `ReceivePack`：
+    `GET /grocery.git/info/refs?service=…`、`POST /grocery.git/git-upload-pack`、
+    `POST /grocery.git/git-receive-pack`。servlet 只是 git 协议的包装层，不是必需的。
+
+28. **`UploadPack.upload(in, out, msgOut)` 的第三个参数必须传 `null`。**
+    JGit 在 `uploadWithExceptionPropagation` 里会把 `out` 包成 `rawOut`，
+    客户端协商 `side-band` 时它自己造 `SideBandOutputStream` 并写进 `rawOut`。
+    外部塞流进去会被当成原始通道直接写，进度文本没有 pkt 分帧，
+    客户端报 `bad line length character: Tota`（"Total …" 被当成长度前缀）。
+    传 `DisabledOutputStream` 则报 `IllegalStateException: Writing not permitted`。
+    两个输出都指向同一实例也不行 —— chunk 边界会交错。
+
+29. **验证主机模式必须用真实 git 客户端，不能只看 HTTP 200。**
+    曾经 `info/refs` 返回了合法的 pkt-line 广告，但 `git clone` 立刻挂在
+    `UploadPack` 上。调试顺序：
+    ```bash
+    adb forward tcp:17411 tcp:7411
+    git clone http://127.0.0.1:17411/grocery.git /tmp/gc      # fetch 链路
+    cd /tmp/gc && git commit --allow-empty -m x && git push    # push 链路
+    # 再回主机确认工作区已出现成员提交（post-receive → pullBareIntoWorkspace）
+    ```
+
 ## 权限
 
 `INTERNET`、`ACCESS_NETWORK_STATE`、`ACCESS_WIFI_STATE`、`REQUEST_INSTALL_PACKAGES`（应用内更新）。

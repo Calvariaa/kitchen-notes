@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.ui
 
 import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -885,34 +886,41 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     fun startHost(id: UserIdentity, groupName: String) {
         viewModelScope.launch {
             _syncMessage.value = UiText.of(R.string.sync_host_starting)
-            val srv = server()
-            srv.setGroupName(groupName)
-            srv.start(id)
-            _hostRunning.value = srv.running
-            if (srv.running) {
-                val meta = app.hostRepository.readMeta()
-                val port = _settings.value.serverPort
-                val addresses = srv.localAddresses()
-                _hostAddresses.value = addresses.map { "$it:$port" }
-                val g = FamilyGroup(
-                    name = meta.groupName,
-                    role = FamilyGroup.Role.HOST,
-                    // 只用于本地展示。成员实际连的是扫描出来的地址，
-                    // 多网卡时（WiFi + 热点）第一个未必是家人所在的那段网
-                    hostAddress = _hostAddresses.value.firstOrNull() ?: "127.0.0.1:$port",
-                    token = meta.token,
-                    joinedAt = _group.value?.joinedAt ?: System.currentTimeMillis(),
-                )
-                app.settings.saveGroup(g)
-                _group.value = g
-                withContext(Dispatchers.IO) {
-                    app.gitRepo.commitAll(id, "recipe:host-init")
-                    srv.pushWorkspaceToBare(id)
+            try {
+                val srv = server()
+                srv.setGroupName(groupName)
+                srv.start(id)
+                _hostRunning.value = srv.running
+                if (srv.running) {
+                    val meta = app.hostRepository.readMeta()
+                    val port = _settings.value.serverPort
+                    val addresses = srv.localAddresses()
+                    _hostAddresses.value = addresses.map { "$it:$port" }
+                    val g = FamilyGroup(
+                        name = meta.groupName,
+                        role = FamilyGroup.Role.HOST,
+                        // 只用于本地展示。成员实际连的是扫描出来的地址，
+                        // 多网卡时（WiFi + 热点）第一个未必是家人所在的那段网
+                        hostAddress = _hostAddresses.value.firstOrNull() ?: "127.0.0.1:$port",
+                        token = meta.token,
+                        joinedAt = _group.value?.joinedAt ?: System.currentTimeMillis(),
+                    )
+                    app.settings.saveGroup(g)
+                    _group.value = g
+                    withContext(Dispatchers.IO) {
+                        app.gitRepo.commitAll(id, "recipe:host-init")
+                        srv.pushWorkspaceToBare(id)
+                    }
+                    _syncMessage.value = UiText.of(R.string.sync_host_started)
+                } else {
+                    _syncMessage.value = srv.lastError?.toUiText()
+                        ?: UiText.of(R.string.sync_host_failed)
                 }
-                _syncMessage.value = UiText.of(R.string.sync_host_started)
-            } else {
-                _syncMessage.value = srv.lastError?.toUiText()
-                    ?: UiText.of(R.string.sync_host_failed)
+            } catch (t: Throwable) {
+                // viewModelScope 没有异常处理器，这里漏一个 catch 就是整个进程闪退（坑 15）
+                Log.w(TAG, "startHost failed", t)
+                _hostRunning.value = false
+                _syncMessage.value = UiText.of(R.string.sync_host_failed)
             }
         }
     }
@@ -1072,5 +1080,6 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private companion object {
         /** 备注落盘防抖：等到用户停顿这么久再写一次 */
         const val NOTE_SAVE_DEBOUNCE_MS = 500L
+        const val TAG = "DishViewModel"
     }
 }

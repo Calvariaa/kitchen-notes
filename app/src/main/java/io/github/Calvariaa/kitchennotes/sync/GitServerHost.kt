@@ -20,7 +20,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.eclipse.jgit.api.Git
-import org.eclipse.jgit.http.server.GitServlet
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.Repository
@@ -38,9 +37,10 @@ import java.util.concurrent.Executors
  *   /api/join          成员用令牌 + 公钥登记
  *   /api/leave         退出
  *
- * 用 JDK 自带的 `com.sun.net.httpserver.HttpServer` 而不是 Ktor/Netty：
- * 只需要几个路由，自带 HttpServer 零依赖、体积几十 KB，对 APK 体积敏感的场景是正解。
- * GitServlet 需要 Servlet API，这里用一个极简适配层把 HttpExchange 桥接到 Servlet 接口。
+ * **不要用 `com.sun.net.httpserver.HttpServer`**：那是 JDK 内部类，Android 运行时没有，
+ * `HttpServer.create()` 会抛 `NoClassDefFoundError` 直接把进程序干掉（表现＝点创建家庭闪退）。
+ * 这里用自建的 [MiniHttpServer]（ServerSocket + 手写 HTTP/1.1 + chunked），零依赖、几十 KB。
+ * git 端点由 [MiniGitHandler] 直接用 JGit 的 UploadPack / ReceivePack 实现，不经过 Servlet。
  */
 class GitServerHost(
     private val ctx: Context,
@@ -51,7 +51,7 @@ class GitServerHost(
 ) {
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var server: com.sun.net.httpserver.HttpServer? = null
+    private var server: MiniHttpServer? = null
     private var gitRepository: Repository? = null
 
     @Volatile
@@ -100,156 +100,159 @@ class GitServerHost(
         if (running) return@withContext
         val port = settings.get().serverPort
 
-        // 组名：UI 传入优先，否则沿用上次的
-        val existingMeta = runCatching { hostRepo.readMeta() }.getOrNull()
-        val meta = (existingMeta ?: HostRepository.GroupMeta(
-            HostRepository.FALLBACK_GROUP_NAME, deviceName(), hostRepo.randomToken(),
-        )).let {
-            groupNameOverride?.let { n -> it.copy(groupName = n) } ?: it
-        }
-        hostRepo.writeMeta(meta)
-        hostRepo.ensureSelfRegistered(identity)
-
-        // 裸仓库：成员推到这里
-        val bare = hostRepo.bareDir()
-        if (!bare.exists()) {
-            Git.init().setBare(true).setDirectory(bare).call().use { }
-        }
-        val repo = FileRepositoryBuilder().setGitDir(bare).setBare().build()
-        repo.config.apply {
-            setBoolean("core", null, "fileMode", false)
-            setBoolean("http", null, "receivepack", true)
-            setBoolean("http", null, "uploadpack", true)
-            save()
-        }
-        // 让默认分支存在，否则客户端第一次 push 会因为没有 ref 而异常
-        if (repo.resolve(Constants.HEAD) == null) {
-            val branch = Constants.MASTER
-            val ident = PersonIdent(identity.name.ifBlank { "dish" }, identity.email.ifBlank { "dish@localhost" })
-
-            val emptyTree = repo.newObjectInserter().use { ins ->
-                val treeId = ins.insert(org.eclipse.jgit.lib.TreeFormatter())
-                ins.flush()
-                treeId
-            }
-            val commitId = repo.newObjectInserter().use { ins ->
-                val builder = org.eclipse.jgit.lib.CommitBuilder().apply {
-                    setTreeId(emptyTree)
-                    setAuthor(ident)
-                    setCommitter(ident)
-                    setMessage("init: family group repository")
-                }
-                val id = ins.insert(builder)
-                ins.flush()
-                id
-            }
-            val refUpdate = repo.updateRef("refs/heads/$branch")
-            refUpdate.setNewObjectId(commitId)
-            refUpdate.forceUpdate()
-            repo.updateRef(Constants.HEAD).link("refs/heads/$branch")
-        }
-        gitRepository = repo
-
-        val httpServer = com.sun.net.httpserver.HttpServer.create(
-            java.net.InetSocketAddress(port),
-            0,
-        ).apply {
-            executor = Executors.newFixedThreadPool(4)
-        }
-
-        // ---- git smart HTTP ----
-        val gitServlet = MiniGitHandler(repo, this@GitServerHost)
-        gitServlet.currentIdentity = identity
-        // 成员推完，主机工作区已更新，通知 UI 刷新
-        gitServlet.onWorkspacePulled = { onRemoteChange?.invoke() }
-
-        httpServer.createContext("/grocery.git") { exchange ->
-            try {
-                gitServlet.handle(exchange)
-            } catch (t: Throwable) {
-                Log.w("GitServerHost", "git request failed", t)
-                runCatching {
-                    exchange.sendResponseHeaders(500, 0)
-                    exchange.close()
-                }
-            }
-        }
-
-        // ---- 发现探针 ----
-        httpServer.createContext("/api/info") { exchange ->
-            val meta = hostRepo.readMeta()
-            val body = buildJsonObject {
-                put("groupName", meta.groupName)
-                put("hostName", deviceName())
-                put("memberCount", meta.members.size)
-                put("requireToken", true)
-                put("app", "kitchen-notes")
-                put("version", 1)
-            }.toString()
-            respondJson(exchange, 200, body)
-        }
-
-        // ---- 加入 ----
-        httpServer.createContext("/api/join") { exchange ->
-            val token = exchange.requestHeaders.getFirst("X-Dish-Token").orEmpty()
-            val meta = hostRepo.readMeta()
-            if (token != meta.token) {
-                // 线上协议里只放机器码，展示文案由客户端按自己的语言翻译
-                respondJson(exchange, 403, """{"error":"token"}""")
-                return@createContext
-            }
-            val form = exchange.requestBody.readBytes().toString(Charsets.UTF_8)
-            val params = parseForm(form)
-            val email = params["email"].orEmpty()
-            val name = params["name"].orEmpty()
-            val pub = params["publicKey"].orEmpty()
-            if (email.isBlank() || pub.isBlank()) {
-                respondJson(exchange, 400, """{"error":"missingFields"}""")
-                return@createContext
-            }
-            hostRepo.addMember(
-                HostRepository.Member(name = name, email = email, publicKey = pub, joinedAt = System.currentTimeMillis()),
-            )
-            // 把已登记的公钥渲染进授权文件，SSH 通道下次连接即生效
-            hostRepo.writeMeta(hostRepo.readMeta())
-            // 成员加入后把主机现有数据推一份进裸仓库，避免新成员拉到空仓库
-            Thread {
-                runCatching { kotlinx.coroutines.runBlocking { pushWorkspaceToBare(identity) } }
-            }.also { it.isDaemon = true }.start()
-            val body = buildJsonObject {
-                put("groupName", meta.groupName)
-                put("hostName", deviceName())
-                put("port", settings.get().serverPort)
-            }.toString()
-            respondJson(exchange, 200, body)
-        }
-
-        httpServer.createContext("/api/leave") { exchange ->
-            val token = exchange.requestHeaders.getFirst("X-Dish-Token").orEmpty()
-            val meta = hostRepo.readMeta()
-            if (token != meta.token) {
-                respondJson(exchange, 403, """{"error":"token"}""")
-                return@createContext
-            }
-            val params = parseForm(exchange.requestBody.readBytes().toString(Charsets.UTF_8))
-            params["email"]?.let(hostRepo::removeMember)
-            respondJson(exchange, 200, """{"ok":true}""")
-        }
-
         try {
+            // 组名：UI 传入优先，否则沿用上次的
+            val existingMeta = runCatching { hostRepo.readMeta() }.getOrNull()
+            val meta = (existingMeta ?: HostRepository.GroupMeta(
+                HostRepository.FALLBACK_GROUP_NAME, deviceName(), hostRepo.randomToken(),
+            )).let {
+                groupNameOverride?.let { n -> it.copy(groupName = n) } ?: it
+            }
+            hostRepo.writeMeta(meta)
+            hostRepo.ensureSelfRegistered(identity)
+
+            // 裸仓库：成员推到这里
+            val bare = hostRepo.bareDir()
+            if (!bare.exists()) {
+                Git.init().setBare(true).setDirectory(bare).call().use { }
+            }
+            val repo = FileRepositoryBuilder().setGitDir(bare).setBare().build()
+            repo.config.apply {
+                setBoolean("core", null, "fileMode", false)
+                setBoolean("http", null, "receivepack", true)
+                setBoolean("http", null, "uploadpack", true)
+                save()
+            }
+            // 让默认分支存在，否则客户端第一次 push 会因为没有 ref 而异常
+            if (repo.resolve(Constants.HEAD) == null) {
+                val branch = Constants.MASTER
+                val ident = PersonIdent(identity.name.ifBlank { "dish" }, identity.email.ifBlank { "dish@localhost" })
+
+                val emptyTree = repo.newObjectInserter().use { ins ->
+                    val treeId = ins.insert(org.eclipse.jgit.lib.TreeFormatter())
+                    ins.flush()
+                    treeId
+                }
+                val commitId = repo.newObjectInserter().use { ins ->
+                    val builder = org.eclipse.jgit.lib.CommitBuilder().apply {
+                        setTreeId(emptyTree)
+                        setAuthor(ident)
+                        setCommitter(ident)
+                        setMessage("init: family group repository")
+                    }
+                    val id = ins.insert(builder)
+                    ins.flush()
+                    id
+                }
+                val refUpdate = repo.updateRef("refs/heads/$branch")
+                refUpdate.setNewObjectId(commitId)
+                refUpdate.forceUpdate()
+                repo.updateRef(Constants.HEAD).link("refs/heads/$branch")
+            }
+            gitRepository = repo
+
+            // ---- git smart HTTP ----
+            val gitHandler = MiniGitHandler(repo, this@GitServerHost)
+            gitHandler.currentIdentity = identity
+            // 成员推完，主机工作区已更新，通知 UI 刷新
+            gitHandler.onWorkspacePulled = { onRemoteChange?.invoke() }
+
+            val httpServer = MiniHttpServer(port)
+
+            httpServer.route(gitHandler.prefix) { call ->
+                try {
+                    gitHandler.handle(call)
+                } catch (t: Throwable) {
+                    Log.w("GitServerHost", "git request failed", t)
+                    runCatching { call.respondText(500, "git failed") }
+                }
+            }
+
+            // ---- 发现探针 ----
+            httpServer.route("/api/info") { call ->
+                val meta2 = hostRepo.readMeta()
+                val body = buildJsonObject {
+                    put("groupName", meta2.groupName)
+                    put("hostName", deviceName())
+                    put("memberCount", meta2.members.size)
+                    put("requireToken", true)
+                    put("app", "kitchen-notes")
+                    put("version", 1)
+                }.toString()
+                call.respondJson(200, body)
+            }
+
+            // ---- 加入 ----
+            httpServer.route("/api/join") { call ->
+                val token = call.header("X-Dish-Token").orEmpty()
+                val meta2 = hostRepo.readMeta()
+                if (token != meta2.token) {
+                    // 线上协议里只放机器码，展示文案由客户端按自己的语言翻译
+                    call.respondJson(403, """{"error":"token"}""")
+                    return@route
+                }
+                val params = parseForm(call.bodyText())
+                val email = params["email"].orEmpty()
+                val name = params["name"].orEmpty()
+                val pub = params["publicKey"].orEmpty()
+                if (email.isBlank() || pub.isBlank()) {
+                    call.respondJson(400, """{"error":"missingFields"}""")
+                    return@route
+                }
+                hostRepo.addMember(
+                    HostRepository.Member(name = name, email = email, publicKey = pub, joinedAt = System.currentTimeMillis()),
+                )
+                // 把已登记的公钥渲染进授权文件，SSH 通道下次连接即生效
+                hostRepo.writeMeta(hostRepo.readMeta())
+                // 成员加入后把主机现有数据推一份进裸仓库，避免新成员拉到空仓库
+                Thread {
+                    runCatching { kotlinx.coroutines.runBlocking { pushWorkspaceToBare(identity) } }
+                }.also { it.isDaemon = true }.start()
+                val body = buildJsonObject {
+                    put("groupName", meta2.groupName)
+                    put("hostName", deviceName())
+                    put("port", settings.get().serverPort)
+                }.toString()
+                call.respondJson(200, body)
+            }
+
+            httpServer.route("/api/leave") { call ->
+                val token = call.header("X-Dish-Token").orEmpty()
+                val meta2 = hostRepo.readMeta()
+                if (token != meta2.token) {
+                    call.respondJson(403, """{"error":"token"}""")
+                    return@route
+                }
+                val params = parseForm(call.bodyText())
+                params["email"]?.let(hostRepo::removeMember)
+                call.respondJson(200, """{"ok":true}""")
+            }
+
             httpServer.start()
             server = httpServer
             running = true
             lastError = null
         } catch (t: Throwable) {
-            lastError = SyncError(SyncError.Kind.PORT_UNAVAILABLE, "$port|${t.message}")
-            runCatching { repo.close() }
+            // 端口占用是最常见的失败；其它（磁盘、JGit）也一并收敛成可见错误，
+            // 绝不能让异常逃到 viewModelScope —— 那会整个进程崩掉（见 AGENTS.md 坑 15）
+            Log.w("GitServerHost", "start failed", t)
+            lastError = if (t is java.net.BindException || t is java.io.IOException &&
+                t.message?.contains("bind", ignoreCase = true) == true
+            ) {
+                SyncError(SyncError.Kind.PORT_UNAVAILABLE, "$port|${t.message}")
+            } else {
+                SyncError(SyncError.Kind.PORT_UNAVAILABLE, "$port|${t.javaClass.simpleName}: ${t.message}")
+            }
+            runCatching { server?.stop() }
+            server = null
+            runCatching { gitRepository?.close() }
             gitRepository = null
+            running = false
         }
     }
 
     suspend fun stop() = withContext(Dispatchers.IO) {
-        runCatching { server?.stop(0) }
+        runCatching { server?.stop() }
         server = null
         runCatching { gitRepository?.close() }
         gitRepository = null
@@ -301,13 +304,6 @@ class GitServerHost(
     }
 
     // ------------------------------------------------------------ HTTP 小工具
-
-    private fun respondJson(exchange: com.sun.net.httpserver.HttpExchange, code: Int, body: String) {
-        val bytes = body.toByteArray(Charsets.UTF_8)
-        exchange.responseHeaders.add("Content-Type", "application/json; charset=utf-8")
-        exchange.sendResponseHeaders(code, bytes.size.toLong())
-        exchange.responseBody.use { it.write(bytes) }
-    }
 
     private fun parseForm(body: String): Map<String, String> =
         body.split('&').mapNotNull { pair ->

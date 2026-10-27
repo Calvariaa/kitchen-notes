@@ -177,10 +177,11 @@ dependencies {
 
     // Git 同步层：JGit 嵌入式服务端 + 客户端 + SSH 身份
     implementation(libs.jgit)
-    implementation(libs.jgit.http.server)
     implementation(libs.jgit.ssh.jsch)
-    // JGit 的 GitServlet 继承自 jakarta.servlet.http.HttpServlet，需要 API 类才能编译与运行
-    implementation(libs.jakarta.servlet.api)
+    // 不再依赖 jgit.http.server 与 jakarta.servlet：主机端 git smart HTTP 由
+    // MiniGitHandler 直接用 UploadPack / ReceivePack 实现。GitServlet 的 glue 层
+    // 要求容器语义（pathInfo 切分 + init 时无条件覆盖 resolver），自建 HTTP 上凑不出来，
+    // 见 AGENTS.md 坑 27。
 
     // 核心库脱糖运行时（配合 isCoreLibraryDesugaringEnabled）
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")

@@ -39,10 +39,7 @@ coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref 
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
 jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
-jgit-http-server = { group = "org.eclipse.jgit", name = "org.eclipse.jgit.http.server", version.ref = "jgit" }
 jgit-ssh-jsch = { group = "org.eclipse.jgit", name = "org.eclipse.jgit.ssh.jsch", version.ref = "jgit" }
-# JGit 7.8 的 http.server 编译在 jakarta.servlet 6.1 上；仅需 API，容器由我们自建的 HttpServer 适配
-jakarta-servlet-api = { group = "jakarta.servlet", name = "jakarta.servlet-api", version = "6.1.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
