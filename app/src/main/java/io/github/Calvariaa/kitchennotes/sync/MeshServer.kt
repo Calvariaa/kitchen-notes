@@ -106,9 +106,20 @@ class MeshServer(
         if (running) return@withContext
 
         val port = settings.get().serverPort
+        // 裸仓库准备和端口监听分开 try：两者失败的原因完全不同，
+        // 混在一个 catch 里会把「JGit 建仓库炸了」报成「端口被占用」，
+        // 用户照着提示去改端口，永远也修不好。
+        val repoError = runCatching { meshRepo.ensureBare(identity) }.exceptionOrNull()
+        if (repoError != null) {
+            Log.w(TAG, "prepare bare repo failed", repoError)
+            lastError = SyncError(
+                SyncError.Kind.REPO_UNAVAILABLE,
+                "${repoError.javaClass.simpleName}: ${repoError.message ?: ""}",
+            )
+            running = false
+            return@withContext
+        }
         try {
-            meshRepo.ensureBare(identity)
-
             val http = MiniHttpServer(port)
             val guard = MeshGuard(peers, ::claimNonce)
 
@@ -201,13 +212,38 @@ class MeshServer(
             // 端口占用最常见。绝不能让异常逃到 viewModelScope —— 那会整个进程崩掉（坑 15）
             Log.w(TAG, "start failed", t)
             lastError = if (t is java.net.BindException) {
-                SyncError(SyncError.Kind.PORT_UNAVAILABLE, "$port")
+                // BindException 在 Android 上 message 常常是 null（libcore 的
+                // IoBridge 只填 errno，不填文案），直接拼出来就是「端口 7411
+                // 被占用：」后面空一截，用户没法照做。所以按 errno 兜一句话。
+                SyncError(SyncError.Kind.PORT_UNAVAILABLE, "$port", bindHint(t))
             } else {
-                SyncError(SyncError.Kind.PORT_UNAVAILABLE, "$port|${t.javaClass.simpleName}: ${t.message}")
+                SyncError(
+                    SyncError.Kind.PORT_UNAVAILABLE,
+                    "$port",
+                    "${t.javaClass.simpleName}: ${t.message ?: bindHint(t)}",
+                )
             }
             runCatching { server?.stop() }
             server = null
             running = false
+        }
+    }
+
+    /**
+     * `BindException` 在 Android 上 `message` 经常是 null：libcore 的 `IoBridge.bind`
+     * 只把 errno 抛上来，不填文案。所以直接 `t.message` 拼出来的界面是
+     * 「端口 7411 被占用：」后面空空一截，用户没法照做。
+     * 这里按 errno 兜一句能直接行动的话。
+     */
+    private fun bindHint(t: Throwable): String {
+        val msg = t.message.orEmpty()
+        return when {
+            msg.contains("EADDRINUSE", ignoreCase = true) ->
+                "EADDRINUSE — another app (or a previous instance of this one) is already on this port"
+            msg.contains("EACCES", ignoreCase = true) ->
+                "EACCES — the system refused this port; pick a different one"
+            msg.isNotBlank() -> msg
+            else -> t.javaClass.simpleName
         }
     }
 

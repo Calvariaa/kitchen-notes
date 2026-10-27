@@ -240,6 +240,8 @@
     <string name="sync_err_token">加入码不对——再向家人确认一下</string>
     <string name="sync_err_missing_fields">缺少 email 或公钥</string>
     <string name="sync_err_port">端口 %1$s 被占用或被系统拒绝：%2$s</string>
+    <string name="sync_err_unexpected">节点启动失败：%1$s</string>
+    <string name="sync_err_repo">本地 git 仓库准备失败：%1$s</string>
 
     <!-- ==================== AI 错误 ==================== -->
     <string name="ai_err_missing_key">还没填 API Key，去「设置 → AI 服务」里填一个</string>

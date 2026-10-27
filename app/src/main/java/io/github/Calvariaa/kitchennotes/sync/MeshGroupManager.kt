@@ -40,14 +40,23 @@ class MeshGroupManager(
             // 而且同步循环遍历 peers 时要能识别出「这是我」而跳过
             server.start(identity, group)
             server.updateGroup(group)
-            meshRepo.ensureBare(identity)
+            // 建裸仓库失败就让 create 失败，但必须抛带原因的类型化错误：
+            // 让裸异常冒到 ViewModel 的话，那里只能笼统说一句「节点启动失败」，
+            // 用户和我们都看不出是 JGit 出了问题还是端口出了问题。
+            runCatching { meshRepo.ensureBare(identity) }
+                .onFailure { throw SyncError(SyncError.Kind.REPO_UNAVAILABLE, describe(it)) }
             // 先在工作区落一个提交，再镜像过去。顺序反了的话工作区可能还是
             // unborn HEAD，push 会因为「源 ref 解析不到对象」直接失败，
             // 于是裸仓库永远停在空提交上 —— 家人加入后拉到的是空仓库。
             runCatching { gitRepo.commitAll(identity, "init: first node") }
-            meshRepo.pushWorkspaceToBare()
+            runCatching { meshRepo.pushWorkspaceToBare() }
+                .onFailure { throw SyncError(SyncError.Kind.REPO_UNAVAILABLE, describe(it)) }
             group
         }
+
+    /** 把异常压成一行技术细节：类名 + 消息，给用户看的部分由资源文案承担 */
+    private fun describe(t: Throwable): String =
+        "${t.javaClass.simpleName}: ${t.message ?: "(no message)"}"
 
     /** 加入家庭：扫到对端 → 用加入码换 secret → 拉名册 → 对齐数据 */
     suspend fun join(

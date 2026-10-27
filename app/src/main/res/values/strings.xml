@@ -257,6 +257,8 @@
     <string name="sync_err_token">Join code does not match — ask a family member again</string>
     <string name="sync_err_missing_fields">Missing email or public key</string>
     <string name="sync_err_port">Port %1$s is taken or refused by the system: %2$s</string>
+    <string name="sync_err_unexpected">Could not start the node: %1$s</string>
+    <string name="sync_err_repo">Could not prepare the local git repo: %1$s</string>
 
     <!-- ==================== AI errors ==================== -->
     <string name="ai_err_missing_key">No API key yet — add one under Settings → AI service</string>

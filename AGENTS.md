@@ -28,7 +28,7 @@ export JAVA_HOME="$HOME/.gradle/jdks/eclipse_adoptium-21-amd64-windows.2"
 |---|---|---|
 | compileSdk / targetSdk | 37 | |
 | minSdk | 26 | Android 8.0+；Android 12 实测支持 |
-| JGit | 7.8.0.202609011348-r | **已迁到 jakarta.servlet** |
+| JGit | 6.5.0.202303070854-r | **不要升到 7.x**，见坑 14 |
 | Gradle | 9.3.1 | wrapper 已入库，`gradlew` 是 100755 |
 | JDK | 21 | |
 
@@ -124,6 +124,10 @@ filesDir/store/
 - **家庭密钥 `secret`** 是成员资格的根：`groupTag = HMAC(secret,"kn-group-tag")` 用来
   快速认出「是不是一家」，`inviteCode = HMAC(secret,"kn-invite")` 派生 8 位加入码。
   加入码是**派生**的，不是存的 —— 换设备只要 secret 还在，码就不变。
+  UI 侧取它的方式是 `vm.inviteCodeOf(group)`，**`group` 必须是组合里
+  `collectAsState()` 拿到的那份**。原因见坑 22：`StateFlow.value` 不是快照状态，
+  读它不建立订阅，刚建完家庭那一下会渲染成空码，重启 App 才出现。`selfNodeId` 同理
+  （`selfNodeIdOf(identity)`）。
 - **加入流程**：新节点扫描 `/24` → `GET /mesh/hello`（唯一不验签的探针，只回
   app/version/nodeId/名字/是否有组）→ 选定目标后 `POST /mesh/join`，带上自己的公钥和加入码 →
   对方验码通过，用**加入者的公钥**把 secret 封（RSA-OAEP-SHA256）回 `sealedSecret`，
@@ -211,7 +215,10 @@ filesDir/store/
 
 ## 踩过的坑（改这块之前先读）
 
-1. **JGit 7.x 是 jakarta.servlet，不是 javax.servlet。**
+1. **JGit 6.x 是 javax/servlet 时代，7.x 才是 jakarta.servlet —— 但我们现在两者都不用。**
+   smart HTTP 由自建的 `MiniGitHandler` 直接驱动 `UploadPack` / `ReceivePack`，
+   不经任何 servlet 层（见坑 27）。下面 1–3 条只是留档：万一有人想把 `GitServlet`
+   搬回来，先看清楚它会踩什么。
    按 javax 写 `MiniGitHandler` 会得到成片 `Unresolved reference 'servlet'`。
    依赖：`jakarta.servlet:jakarta.servlet-api:6.1.0`（provided 才行，但 Android 上要打进包）。
 
@@ -243,12 +250,28 @@ filesDir/store/
 
 13. **Release assets API 里 `size` 是数字，不是字符串**；`JsonPrimitive.content` 取得到，但别 `as? JsonObject` 硬转整个数组。
 
-14. **JGit 7.x 必须开 core library desugaring。** 它用 Java 11 编译，内部调
-    `Files.readString` / `Files.writeString` / `Files.mismatch`，Android 12 (API 31) 上没有
-    （`readString` 要 API 33）。不开脱糖 → 首次建仓库就 `NoSuchMethodError`，表现是
-    **新装后点「开始使用」直接闪退**，且只有旧系统复现（模拟器 API 36 看不出来）。
-    配置：`isCoreLibraryDesugaringEnabled = true` + `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")`。
-    验证办法：反编译 APK 的 dex 查 `Ljava/nio/file/Files;.readString` 是否还在。
+14. **JGit 必须锁在 6.5；7.x 在 Android 12 上必炸，而且脱糖救不了。**
+    7.x 起 `org.eclipse.jgit.util.IO.readFully` 改用 `InputStream.readNBytes`（Java 9 的 API）。
+    Android 直到 **API 33** 才有这个方法，而 **core library desugaring 不覆盖它**：
+    `desugar_jdk_libs:2.1.5` 里的 `DesugarInputStream` 只 backport 了 `transferTo`，
+    唯一的花式变体 `desugar_jdk_libs_nio` 也不含 `readNBytes`（`javap` 逐版验过，
+    2.1.5 已是 latest）。JGit 全仓只有 7 个类引用它，但其中一个正是每次读 config 都走的 `IO`：
+    ```
+    NoSuchMethodError: No virtual method readNBytes(I)[B
+      in class Lorg/eclipse/jgit/util/io/SilentFileInputStream;
+      at org.eclipse.jgit.util.IO.readFully(IO.java:90)
+      at org.eclipse.jgit.storage.file.FileBasedConfig.load(FileBasedConfig.java:148)
+      at ...FileRepository.getConfig(...)
+    ```
+    表现是 Android 12 上**点「开始使用」之后创建家庭失败**（同步层整个废掉），
+    API 33+ 完全正常，所以高版本模拟器根本看不出来。
+    逐版扫过的结果：**6.0 / 6.3 / 6.5 干净；6.8 / 6.10 / 7.8 都有 `readNBytes`。**
+    6.5 是我们验证过的最后一个干净版本（`TransportHttp.setAdditionalHeaders`、
+    `UploadPack.upload(in,out,msgOut)`、`UploadPack/ReceivePack.setBiDirectionalPipe`
+    在 6.5 上都在，API 无需改动）。
+    **判断标准：升级 JGit 前先 `javap -c` 扫一遍 `org.eclipse.jgit.util.IO` 里有没有 `readNBytes`。**
+    脱糖仍然要开着（`isCoreLibraryDesugaringEnabled = true` + `desugar_jdk_libs:2.1.5`），
+    它负责 `j$/time`、`j$/util/stream` 这些 —— 但不能指望它兜 `java.io`。
 
 15. **`viewModelScope.launch` 里的未捕获异常 = 进程闪退。** 它没有
     `CoroutineExceptionHandler`，异常直接走默认处理器。凡是用户点了就会触发的路径
@@ -395,6 +418,28 @@ filesDir/store/
     `setAdditionalHeaders` 是 per-Transport 的静态 map，两个请求带的是**同一个
     Authorization / 同一个 nonce**，第二个必定被重放检测拒掉。这不是客户端能修的。
     现在 claim 的 key 是 `nonce|method|pathClass`，仍然挡住「拿抓包换端点换操作」。
+
+36. **`createGroup` 曾把真实失败原因盖成一句「节点启动失败」。**
+    `startNodeServing` 本来已经往 `_syncMessage` 写了具体原因（端口被占、少了什么），
+    但 `createGroup` 紧接着无条件写 `sync_group_created` / `sync_node_failed`，
+    于是用户永远只看到那句没有信息量的话，照着它既不知道改端口也不知道该看什么。
+    修法：**只在 `_nodeServing` 为 true 时才覆盖**，失败时保留底层给的文字；
+    `catch` 分支改用 `sync_err_unexpected` 并带上异常类名+消息。
+    `joinGroup` 有同一个毛病，一起改了。
+    相关的还有 `MeshServer.start`：它把 `ensureBare` 和 `http.start()` 塞进同一个
+    `try`，于是 JGit 建仓库失败也会被报成 `PORT_UNAVAILABLE` —— 用户去改端口，
+    怎么改都修不好。现在裸仓库准备单独 try，失败报 `REPO_UNAVAILABLE`。
+    **教训：错误信息的价值在于「用户能不能照它做点什么」，把具体原因降级成通用
+    兜底文案等于让这个功能失效。**
+
+37. **`BindException.message` 在 Android 上经常是 null。**
+    libcore 的 `IoBridge.bind` 只把 errno 抛上来，不填文案。于是
+    `sync_err_port`（「端口 %1$s 被占用：%2$s」）渲染出来是
+    「端口 7411 被占用：」后面空一截 —— 占位符有值但值为空串。
+    现在 `bindHint()` 按 errno 兜一句能直接行动的英文
+    （`EADDRINUSE` / `EACCES`），其它情况退回 `t.javaClass.simpleName`。
+    同一个函数也别再用 `"端口|原因"` 拼字符串再 `split("|")`：原因文本来自系统，
+    含不含 `|` 不由我们决定。`SyncError` 因此多了独立的 `hint` 字段。
 
 ## 权限
 

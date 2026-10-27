@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import io.github.Calvariaa.kitchennotes.R
 import io.github.Calvariaa.kitchennotes.ai.DeepSeekClient
 import io.github.Calvariaa.kitchennotes.data.Peer
+import io.github.Calvariaa.kitchennotes.sync.MeshCrypto
 import io.github.Calvariaa.kitchennotes.sync.SshKeyFactory
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
 import io.github.Calvariaa.kitchennotes.ui.components.DrawerMenuButton
@@ -106,7 +107,9 @@ fun SettingsScreen(
     val nodeServing by vm.nodeServing.collectAsState()
     val nodeAddresses by vm.nodeAddresses.collectAsState()
     val peers by vm.peers.collectAsState()
-    val inviteCode = vm.inviteCode
+    // 必须从已经 collect 的 `group` 派生，不能调 vm 里读 _group.value 的 getter：
+    // StateFlow.value 不是快照状态，读它不建立订阅，刚建完家庭那一刻会渲染成空（坑 22）
+    val inviteCode = vm.inviteCodeOf(group)
     val syncMessage by vm.syncMessage.collectAsState()
     val aiTestOk by vm.aiTestOk.collectAsState()
     val update by vm.update.collectAsState()
@@ -472,8 +475,9 @@ fun SettingsScreen(
                         }
 
                         // 成员列表。selfNodeId 标出「这台」，其余是家人。
-                        // 谁在线不看名字看地址刷新时间 —— peers 里的 lastSeenAt 由对端请求刷新
-                        val selfId = vm.selfNodeId
+                        // 谁在线不看名字看地址刷新时间 —— peers 里的 lastSeenAt 由对端请求刷新。
+                        // 一样从已 collect 的 identity 派生，别调读 _identity.value 的 getter（坑 22）
+                        val selfId = identity?.let { MeshCrypto.nodeId(it.sshPublicKey) }.orEmpty()
                         Text(
                             stringResource(R.string.settings_peers_title),
                             style = MaterialTheme.typography.labelSmall,

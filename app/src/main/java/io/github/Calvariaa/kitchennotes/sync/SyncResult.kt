@@ -52,6 +52,12 @@ class SyncError(
     val kind: Kind,
     /** 底层技术细节，可为空 */
     val detail: String? = null,
+    /**
+     * 第二段细节。`sync_err_port` 这类文案有两个占位符（端口号、原因），
+     * 而 [detail] 只能放一个字段。分开存比在字符串里用 `|` 拼再拆要干净 ——
+     * 拆的时候端口号里也可能出现分隔符，早晚出问题。
+     */
+    val hint: String? = null,
 ) : Exception(detail ?: kind.name) {
 
     enum class Kind(val resId: Int) {
@@ -65,10 +71,11 @@ class SyncError(
         TOKEN_REJECTED(R.string.sync_err_token),
         MISSING_FIELDS(R.string.sync_err_missing_fields),
         PORT_UNAVAILABLE(R.string.sync_err_port),
+        REPO_UNAVAILABLE(R.string.sync_err_repo),
         ;
 
         /** 是否需要附带技术细节 */
         val wantsDetail: Boolean
-            get() = this in setOf(FETCH_FAILED, PUSH_FAILED, UNREACHABLE, PORT_UNAVAILABLE)
+            get() = this in setOf(FETCH_FAILED, PUSH_FAILED, UNREACHABLE, PORT_UNAVAILABLE, REPO_UNAVAILABLE)
     }
 }

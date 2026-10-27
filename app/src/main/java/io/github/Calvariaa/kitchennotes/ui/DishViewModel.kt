@@ -204,12 +204,27 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private val _nodeServing = MutableStateFlow(false)
     val nodeServing: StateFlow<Boolean> = _nodeServing.asStateFlow()
 
-    /** 本机 nodeId（SSH 公钥指纹）。UI 用来在成员列表里标出自己 */
-    val selfNodeId: String get() = _identity.value?.let { MeshCrypto.nodeId(it.sshPublicKey) }.orEmpty()
+    /**
+     * 本机 nodeId（SSH 公钥指纹）。UI 用来在成员列表里标出自己。
+     *
+     * 同 [inviteCodeOf]：不能让 UI 读 `get() = _identity.value` 的属性，
+     * 那个读取不进组合依赖（坑 22），身份刚生成完那一下会渲染成空串，
+     * 于是「本机」这一条在扫描结果里会显示成一台陌生设备。
+     */
+    fun selfNodeIdOf(identity: UserIdentity?): String =
+        identity?.let { MeshCrypto.nodeId(it.sshPublicKey) }.orEmpty()
 
-    /** 加入码：由家庭密钥派生，全家一致，换设备重装都不变 */
-    val inviteCode: String get() = _group.value?.secret?.takeIf { it.isNotBlank() }
-        ?.let { MeshCrypto.inviteCode(it) }.orEmpty()
+    /**
+     * 加入码：由家庭密钥派生，全家一致，换设备重装都不变。
+     *
+     * 永远不要写成 `val inviteCode get() = _group.value...`：StateFlow 的 `.value`
+     * 不是 Compose 快照状态，组合里读它不会建立订阅（见 AGENTS.md 坑 22）。
+     * 表现是刚创建完家庭那一下码是空的，重启 App 或者随手切个页面才冒出来 ——
+     * 因为那一下的重组是别的状态变更顺带触发的。
+     * 所以这里是普通函数，由 UI 把 `group` 传进来。
+     */
+    fun inviteCodeOf(group: MeshGroup?): String =
+        group?.secret?.takeIf { it.isNotBlank() }?.let { MeshCrypto.inviteCode(it) }.orEmpty()
 
     /** 定时同步协程；设置里改了间隔或开关时要重建 */
     private var autoSyncJob: Job? = null
@@ -929,16 +944,23 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
                 startNodeServing(id, group)
                 refreshPeers()
                 reload()
-                _syncMessage.value = if (_nodeServing.value) {
-                    UiText.of(R.string.sync_group_created)
-                } else {
-                    UiText.of(R.string.sync_node_failed)
+                // 不要把 startNodeServing 写好的失败原因盖掉。
+                // 它设的是「端口 7411 被占用：BindException ...」这种能直接照做的信息，
+                // 而这里如果无条件写 sync_group_created / sync_node_failed，用户就只看到
+                // 一句「节点启动失败」，既不知道是端口还是权限，也没法自救。
+                if (_nodeServing.value && _syncMessage.value == null) {
+                    _syncMessage.value = UiText.of(R.string.sync_group_created)
                 }
             } catch (t: Throwable) {
                 // viewModelScope 没有异常处理器，这里漏一个 catch 就是整个进程闪退（坑 15）
                 Log.w(TAG, "createGroup failed", t)
                 _nodeServing.value = false
-                _syncMessage.value = UiText.of(R.string.sync_node_failed)
+                // 抛到这一层的异常没经过 MeshServer 的 catch，lastError 是空的，
+                // 只能把异常本身摆到界面上 —— 否则跟「端口占用」长得一模一样
+                _syncMessage.value = UiText.of(
+                    R.string.sync_err_unexpected,
+                    "${t.javaClass.simpleName}: ${t.message ?: ""}",
+                )
             }
         }
     }
@@ -957,7 +979,9 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
             _scanning.value = true
             _discovered.value = emptyList()
             try {
-                _discovered.value = app.lanDiscovery.scan(selfNodeId)
+                // 这里读 _identity.value 是对的：它在协程里、不在组合里，
+                // 只需要「此刻的值」，不需要建立订阅
+                _discovered.value = app.lanDiscovery.scan(selfNodeIdOf(_identity.value))
             } catch (t: Throwable) {
                 Log.w(TAG, "scan failed", t)
                 _discovered.value = emptyList()
@@ -984,7 +1008,10 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
                 startNodeServing(id, outcome.group)
                 refreshPeers()
                 reload()
-                _syncMessage.value = UiText.of(R.string.sync_joined, outcome.group.name)
+                // 同 createGroup：节点没起来时保留 startNodeServing 给出的具体原因
+                if (_nodeServing.value) {
+                    _syncMessage.value = UiText.of(R.string.sync_joined, outcome.group.name)
+                }
             } catch (e: SyncError) {
                 _syncMessage.value = e.toUiText()
             } catch (t: Throwable) {

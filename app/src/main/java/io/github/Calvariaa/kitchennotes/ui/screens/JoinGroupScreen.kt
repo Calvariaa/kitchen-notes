@@ -71,6 +71,9 @@ fun JoinGroupScreen(
     val hosts by vm.discovered.collectAsState()
     val syncMessage by vm.syncMessage.collectAsState()
     val group by vm.group.collectAsState()
+    // 从已 collect 的 identity 派生，别读 VM 里 `get() = _identity.value` 的 getter：
+    // StateFlow.value 不是快照状态，不会触发重组（AGENTS.md 坑 22）
+    val selfNodeId = vm.selfNodeIdOf(vm.identity.collectAsState().value)
 
     var pendingNode by remember { mutableStateOf<DiscoveredNode?>(null) }
     var token by remember { mutableStateOf("") }
@@ -214,7 +217,7 @@ fun JoinGroupScreen(
                             ),
                             // 自己这台不能「加入自己」；没有组的不接受加入
                             enabled = host.hasGroup &&
-                                !(host.nodeId.isNotBlank() && host.nodeId == vm.selfNodeId),
+                                !(host.nodeId.isNotBlank() && host.nodeId == selfNodeId),
                             onClick = {
                                 pendingNode = host
                                 token = ""
@@ -248,7 +251,7 @@ fun JoinGroupScreen(
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                     val label = when {
-                                        host.nodeId.isNotBlank() && host.nodeId == vm.selfNodeId ->
+                                        host.nodeId.isNotBlank() && host.nodeId == selfNodeId ->
                                             stringResource(R.string.join_self)
                                         host.hasGroup ->
                                             stringResource(R.string.join_host_meta, host.name, host.address)

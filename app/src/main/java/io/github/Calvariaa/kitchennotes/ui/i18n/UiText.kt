@@ -92,10 +92,9 @@ fun UpdateError.toUiText(): UiText = when (this) {
 /** 同步错误 → 可翻译文案 */
 fun SyncError.toUiText(): UiText = when (kind) {
     SyncError.Kind.PORT_UNAVAILABLE -> {
-        // 细节按 "端口|原因" 打包，这里拆开喂给带两个占位符的资源
-        val (port, reason) = (detail.orEmpty()).split("|", limit = 2)
-            .let { (it.getOrNull(0).orEmpty()) to (it.getOrNull(1).orEmpty()) }
-        UiText.of(kind.resId, port, reason)
+        // 端口号走 detail，原因走 hint。以前是拼成 "端口|原因" 再按 | 拆开，
+        // 但那等于假定原因文本里永远没有 |，而它来自系统/异常消息，不受我们控制。
+        UiText.of(kind.resId, detail.orEmpty(), hint.orEmpty())
     }
 
     else -> if (kind.wantsDetail) {
