@@ -56,7 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.Calvariaa.kitchennotes.R
-import io.github.Calvariaa.kitchennotes.data.FamilyGroup
+import io.github.Calvariaa.kitchennotes.data.Peer
 import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.ui.i18n.text
 import io.github.Calvariaa.kitchennotes.update.UpdateInfo
@@ -88,6 +88,7 @@ fun RecipeListScreen(
     val loading by vm.loading.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
     val group by vm.group.collectAsStateWithLifecycle()
+    val peers by vm.peers.collectAsStateWithLifecycle()
     val syncMessage by vm.syncMessage.collectAsStateWithLifecycle()
     val update by vm.update.collectAsStateWithLifecycle()
     val updatePromptShown by vm.updatePromptShown.collectAsStateWithLifecycle()
@@ -113,16 +114,9 @@ fun RecipeListScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                         val g = group
-                        if (g != null) {
+                        if (g != null && g.name.isNotBlank()) {
                             Text(
-                                text = when (g.role) {
-                                    FamilyGroup.Role.HOST ->
-                                        stringResource(R.string.list_role_host, g.name)
-                                    FamilyGroup.Role.MEMBER ->
-                                        stringResource(R.string.list_role_member, g.name)
-                                    // NONE 时 group 已经存在但没角色，属过渡态，不显示副标题
-                                    FamilyGroup.Role.NONE -> ""
-                                },
+                                text = stringResource(R.string.list_role_member, g.name, peers.size),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                             )

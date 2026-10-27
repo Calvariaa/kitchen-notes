@@ -159,6 +159,30 @@ class MiniHttpServer(private val port: Int) {
     }
 
     private fun readBody(input: InputStream, headers: Map<String, List<String>>): ByteArray {
+        val raw = readBodyRaw(input, headers)
+        if (raw.isEmpty()) return raw
+        // JGit 的 HTTP 客户端会对 git-upload-pack / git-receive-pack 的请求体做
+        // gzip（`Content-Encoding: gzip`），因为它默认服务端是支持压缩的真实
+        // git-http-backend。我们这里是手写服务器，不处理就等于把压缩字节直接
+        // 喂给 `UploadPack.upload()`，报
+        // `IOException: Invalid packet line header: ?<garbage>` —— 看起来像协议 bug，
+        // 实际是漏了一层解码。
+        //
+        // 只认 gzip：deflate 在 HTTP 里的含义历来有争议（raw vs zlib 包装），
+        // 而 JGit 客户端固定发 gzip，为它猜另一半没有收益。
+        val encoding = headers["content-encoding"]?.firstOrNull()?.trim()?.lowercase()
+        if (encoding != null && encoding.contains("gzip")) {
+            return runCatching {
+                java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(raw)).use { it.readBytes() }
+            }.getOrElse {
+                Log.w("MiniHttpServer", "gzip decode failed", it)
+                raw
+            }
+        }
+        return raw
+    }
+
+    private fun readBodyRaw(input: InputStream, headers: Map<String, List<String>>): ByteArray {
         val chunked = headers["transfer-encoding"]?.firstOrNull()
             ?.contains("chunked", ignoreCase = true) == true
         if (chunked) return readChunked(input)

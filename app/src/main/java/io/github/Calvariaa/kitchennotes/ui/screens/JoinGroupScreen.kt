@@ -51,7 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.github.Calvariaa.kitchennotes.R
-import io.github.Calvariaa.kitchennotes.data.DiscoveredHost
+import io.github.Calvariaa.kitchennotes.sync.DiscoveredNode
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
 import io.github.Calvariaa.kitchennotes.ui.i18n.text
 
@@ -72,7 +72,7 @@ fun JoinGroupScreen(
     val syncMessage by vm.syncMessage.collectAsState()
     val group by vm.group.collectAsState()
 
-    var pendingHost by remember { mutableStateOf<DiscoveredHost?>(null) }
+    var pendingNode by remember { mutableStateOf<DiscoveredNode?>(null) }
     var token by remember { mutableStateOf("") }
 
     // 加入成功后自动返回。放在 LaunchedEffect 里：组合期间导航会改状态树，
@@ -212,8 +212,11 @@ fun JoinGroupScreen(
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                             ),
+                            // 自己这台不能「加入自己」；没有组的不接受加入
+                            enabled = host.hasGroup &&
+                                !(host.nodeId.isNotBlank() && host.nodeId == vm.selfNodeId),
                             onClick = {
-                                pendingHost = host
+                                pendingNode = host
                                 token = ""
                             },
                         ) {
@@ -239,17 +242,20 @@ fun JoinGroupScreen(
                                 Spacer(Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        host.groupName,
+                                        host.groupName.takeIf { it.isNotBlank() }
+                                            ?: host.name.ifBlank { host.address },
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.SemiBold,
                                     )
+                                    val label = when {
+                                        host.nodeId.isNotBlank() && host.nodeId == vm.selfNodeId ->
+                                            stringResource(R.string.join_self)
+                                        host.hasGroup ->
+                                            stringResource(R.string.join_host_meta, host.name, host.address)
+                                        else -> stringResource(R.string.join_no_group)
+                                    }
                                     Text(
-                                        stringResource(
-                                            R.string.join_host_meta,
-                                            host.hostName,
-                                            host.address,
-                                            host.memberCount,
-                                        ),
+                                        label,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -268,10 +274,10 @@ fun JoinGroupScreen(
     }
 
     // 加入码输入
-    val target = pendingHost
+    val target = pendingNode
     if (target != null) {
         AlertDialog(
-            onDismissRequest = { pendingHost = null },
+            onDismissRequest = { pendingNode = null },
             title = { Text(stringResource(R.string.join_dialog_title, target.groupName)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -293,13 +299,13 @@ fun JoinGroupScreen(
                 TextButton(
                     onClick = {
                         vm.joinGroup(target, token)
-                        pendingHost = null
+                        pendingNode = null
                     },
                     enabled = token.isNotBlank(),
                 ) { Text(stringResource(R.string.join_action)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingHost = null }) {
+                TextButton(onClick = { pendingNode = null }) {
                     Text(stringResource(R.string.action_cancel))
                 }
             },

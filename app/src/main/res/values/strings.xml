@@ -28,7 +28,7 @@
 
     <!-- ==================== recipe list ==================== -->
     <string name="list_role_host">Host · %1$s</string>
-    <string name="list_role_member">Joined %1$s</string>
+    <string name="list_role_member">%1$s · %2$d members</string>
     <string name="list_sync">Sync</string>
     <string name="list_new_recipe">New recipe</string>
     <string name="list_search_placeholder">Search dishes, ingredients…</string>
@@ -147,21 +147,21 @@
     <string name="settings_language_en">English</string>
 
     <string name="settings_section_sync">Family sync</string>
-    <string name="settings_sync_intro">On the same Wi-Fi, one device acts as host and everyone else joins. Recipes sync both ways automatically. Under the hood it is a real git repo: one file per dish, so who added what and when stays in the commit history.</string>
-    <string name="settings_host_running">You are the host (running)</string>
-    <string name="settings_host_stopped">You are the host (stopped)</string>
-    <string name="settings_host_addresses">Other devices find you at:</string>
+    <string name="settings_sync_intro">Everyone on the same Wi-Fi is a peer: each device keeps a full copy and syncs directly with the others. No host, no single point of failure. Under the hood it is a real git repo — one file per dish — and every device signs its requests with its SSH key.</string>
+    <string name="settings_host_running">This device is a peer (listening)</string>
+    <string name="settings_host_stopped">This device is a peer (not listening)</string>
+    <string name="settings_host_addresses">Other devices reach you at:</string>
     <string name="settings_join_code">Join code: %1$s</string>
     <string name="settings_restart_host">Restart service</string>
-    <string name="settings_dissolve_group">Dissolve group</string>
-    <string name="settings_joined_group">Joined “%1$s”</string>
-    <string name="settings_host_address">Host: %1$s</string>
+    <string name="settings_dissolve_group">Leave group</string>
+    <string name="settings_joined_group">Member of “%1$s”</string>
+    <string name="settings_host_address">Peer: %1$s</string>
     <string name="settings_sync_now">Sync now</string>
     <string name="settings_leave_group">Leave group</string>
-    <string name="settings_no_group">Not in a family group yet. You can host from this device, or scan for a host on your network.</string>
-    <string name="settings_become_host">Become host</string>
+    <string name="settings_no_group">Not in a family group yet. Create one on this device, or scan for a family member on your network.</string>
+    <string name="settings_become_host">Create a group</string>
     <string name="settings_join_group">Join a group</string>
-    <string name="settings_sync_on_launch">Pull on launch</string>
+    <string name="settings_sync_on_launch">Sync on launch</string>
     <string name="settings_push_after_edit">Push right after edits</string>
     <string name="settings_auto_sync">Auto-sync every 5 min</string>
     <string name="settings_auto_sync_desc">Also syncs when other family members edit</string>
@@ -176,27 +176,27 @@
     <string name="settings_storage_note">Recipes are stored here as JSON, images are named by content hash. This folder is itself a git repo — you can copy it straight out.</string>
 
     <string name="settings_group_dialog_title">Family group</string>
-    <string name="settings_group_dialog_body">Host: keep every recipe on this device and serve it over the local network for your family.\nJoin: scan the same Wi-Fi for a device already hosting.</string>
+    <string name="settings_group_dialog_body">Create: this device becomes the first peer and generates a join code.\nJoin: scan the same Wi-Fi for someone already in a group.</string>
     <string name="settings_group_dialog_scan">Scan to join</string>
     <string name="settings_host_name_title">Name your family group</string>
-    <string name="settings_host_name_body">This is the name your family sees when they scan.</string>
+    <string name="settings_host_name_body">This is the name family members see when they scan.</string>
     <string name="settings_host_name_label">Group name</string>
-    <string name="settings_host_name_start">Start hosting</string>
+    <string name="settings_host_name_start">Create group</string>
     <string name="settings_default_group_name">My kitchen</string>
 
     <!-- ==================== join group ==================== -->
     <string name="join_title">Join a family group</string>
-    <string name="join_intro">Make sure both devices are on the same Wi-Fi. Tap the button below to scan — nearby hosts show up within seconds.</string>
+    <string name="join_intro">Make sure both devices are on the same Wi-Fi. Tap below to scan — nearby members show up within seconds.</string>
     <string name="join_scanning">Scanning the network…</string>
     <string name="join_scan">Start scan</string>
     <string name="join_rescan">Scan again</string>
     <string name="join_probing">Probing 192.168.x.x …</string>
-    <string name="join_none_title">No host found yet</string>
-    <string name="join_none_hint">Check that the other device already tapped “Become host” in Settings → Family sync</string>
-    <string name="join_host_meta">%1$s · %2$s · %3$d people</string>
+    <string name="join_none_title">No family member found yet</string>
+    <string name="join_none_hint">Check that the other device has already created a group in Settings → Family sync</string>
+    <string name="join_host_meta">%1$s · %2$s</string>
     <string name="join_action">Join</string>
     <string name="join_dialog_title">Join “%1$s”</string>
-    <string name="join_dialog_body">Ask the host for the join code — it is shown on their device under Settings → Family sync.</string>
+    <string name="join_dialog_body">Ask a family member for the join code — it is shown on their device under Settings → Family sync.</string>
     <string name="join_code_label">Join code</string>
 
     <!-- ==================== runtime status (ViewModel) ==================== -->
@@ -209,10 +209,10 @@
     <string name="stage_refine_failed">Rewrite failed</string>
     <string name="stage_need_input">Give at least one photo or some text</string>
 
-    <string name="sync_host_starting">Starting the host service…</string>
-    <string name="sync_host_started">Host is running — devices on the same Wi-Fi can now find you</string>
-    <string name="sync_host_failed">Host did not start</string>
-    <string name="sync_host_stopped">Host stopped, group dissolved</string>
+    <string name="sync_host_starting">Starting this device’s node…</string>
+    <string name="sync_host_started">Node is listening — family members on the same Wi-Fi can reach you</string>
+    <string name="sync_host_failed">Node did not start</string>
+    <string name="sync_host_stopped">Node stopped, group dissolved</string>
     <string name="sync_joining">Joining “%1$s”…</string>
     <string name="sync_joined">Joined “%1$s”, recipes pulled</string>
     <string name="sync_join_failed">Could not join</string>
@@ -221,26 +221,40 @@
     <string name="sync_failed">Sync failed: %1$s</string>
     <string name="sync_key_regenerated">Key regenerated — a newly joined group will register the new public key</string>
     <string name="sync_no_identity">No identity yet</string>
-    <string name="sync_already_host">You are the host, data already lives here</string>
+    <string name="sync_already_host">Data already lives on this device</string>
     <string name="sync_committed_local">Local changes committed</string>
 
     <string name="settings_storage_value">%1$d recipes · %2$s MB of images</string>
     <string name="settings_theme_choice">%1$s</string>
 
-    <!-- ==================== sync results / errors ==================== -->
+        <string name="sync_node_starting">Starting this device’s node…</string>
+    <string name="sync_node_failed">Node did not start</string>
+    <string name="sync_group_created">Family group created — share the join code with your family</string>
+    <string name="sync_group_renamed">Family group renamed</string>
+    <string name="settings_peers_title">Family members</string>
+    <string name="settings_peers_empty">No other devices yet. Scan from the other device to join.</string>
+    <string name="settings_peers_self">This device</string>
+    <string name="settings_peer_offline">Not seen yet</string>
+    <string name="settings_forget_peer">Remove</string>
+    <string name="settings_my_addresses">This device’s addresses:</string>
+    <string name="settings_invite_hint">Family members enter this code to join.</string>
+    <string name="join_self">This device</string>
+    <string name="join_no_group">Not in a group yet</string>
+
+<!-- ==================== sync results / errors ==================== -->
     <string name="sync_part_pulled">pulled %1$d commits</string>
     <string name="sync_part_conflicts">merged %1$d conflicts (kept the newer)</string>
     <string name="sync_part_pushed">local changes pushed</string>
     <string name="sync_part_up_to_date">already up to date</string>
-    <string name="sync_part_adopted_empty">joined “%1$s” (host has no recipes yet)</string>
+    <string name="sync_part_adopted_empty">joined “%1$s” (no recipes yet)</string>
     <string name="sync_err_fetch">Pull failed: %1$s</string>
     <string name="sync_err_push">Push failed: %1$s</string>
     <string name="sync_err_no_group">Not in a family group yet</string>
     <string name="sync_err_unreachable">Network unreachable</string>
-    <string name="sync_err_host_unreachable">Host unreachable</string>
+    <string name="sync_err_host_unreachable">No peer reachable</string>
     <string name="sync_err_join_rejected">Could not join</string>
-    <string name="sync_err_bad_response">Host returned something unreadable</string>
-    <string name="sync_err_token">Join code does not match — rescan the host</string>
+    <string name="sync_err_bad_response">A peer returned something unreadable</string>
+    <string name="sync_err_token">Join code does not match — ask a family member again</string>
     <string name="sync_err_missing_fields">Missing email or public key</string>
     <string name="sync_err_port">Port %1$s is taken or refused by the system: %2$s</string>
 
@@ -251,7 +265,7 @@
     <string name="ai_err_parse">Could not read the model output as a recipe: %1$s</string>
     <string name="ai_err_empty">The model returned nothing. Try again, or switch models</string>
 
-    <string name="sync_err_host_not_running">Host service is not running</string>
+    <string name="sync_err_host_not_running">Node service is not running</string>
 
     <!-- ==================== palette ==================== -->
     <string name="palette_terracotta">Terracotta</string>

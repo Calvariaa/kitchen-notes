@@ -61,9 +61,17 @@ app/src/main/java/io/github/Calvariaa/kitchennotes/
 │   └── ImageIngestor.kt    压缩 + EXIF 方向校正
 ├── sync/
 │   ├── GitRepo.kt          工作区仓库初始化、commitAll、冲突仲裁
-│   ├── GitServerHost.kt    主机：HttpServer + 4 个端点
-│   ├── MiniGitHandler.kt   HttpExchange → jakarta.servlet 桥接
-│   ├── SyncClient.kt       成员：fetch/merge/push；HostRepository
+│   ├── MeshServer.kt       本机节点服务：/node.git + /mesh/*（人人都是服务端）
+│   ├── MiniGitHandler.kt   HttpCall → JGit UploadPack/ReceivePack
+│   ├── MiniHttpServer.kt   ServerSocket + 手写 HTTP/1.1（含 gzip 请求体）
+│   ├── MeshSync.kt         与每个对端 fetch → merge → push
+│   ├── MeshRepo.kt         本机裸仓库 node.git：镜像 / 回灌 / 旧仓库迁移
+│   ├── MeshGroupManager.kt 创建 / 加入 / 改名 / 退出家庭
+│   ├── MeshApi.kt          /mesh/hello、/mesh/join、/mesh/info 客户端
+│   ├── MeshAuth.kt         给请求打 Kn1 签名头
+│   ├── MeshCrypto.kt       节点身份、验签、家庭密钥派生、密钥解析
+│   ├── MeshWire.kt         节点间 JSON 报文
+│   ├── PeerRegistry.kt     对端名册 + MeshGuard（验签/成员资格/防重放）
 │   ├── SyncResult.kt       同步结果的结构化事实（SyncPart / SyncError）
 │   └── LanDiscovery.kt     /24 网段 TCP 扫活
 ├── update/
@@ -91,36 +99,77 @@ filesDir/store/
     menus/.gitkeep             空目录占位，git 不跟踪空目录
     images/yyyy/MM/<sha8>.jpg  内容散列命名，天然去重
     .git/
-  grocery.git/                 主机裸仓库（成员 push 到这里）
+  node.git/                    本机裸仓库（对端 fetch/push 的对象，只有这一份）
+  mesh/                        保留目录（P2P 运行时数据）
   updates/                     下载下来的更新 APK（装完删）
-  settings.json  identity.json  family.json
+  settings.json  identity.json  family.json  peers.json
 ```
+
+`family.json` 里存 `MeshGroup(name, secret, joinedAt)`，**不再有 role/hostAddress/token**；
+`peers.json` 是 `List<Peer>`（nodeId / 公钥 / 地址 / 最后见到时间 / 是否已对齐）。
 
 ## 同步模型
 
-- 主机：`HttpServer` 在 7411 端口同时提供 `/grocery.git`（smart HTTP）、`/api/info`、`/api/join`、`/api/leave`。
-- 成员：`fetch → 本地 commit → merge（冲突按 updatedAt 取新） → push`。
-- 主机自己编辑时：commit 后 `pushWorkspaceToBare`；成员 push 后 JGit 的 `postReceive` 钩子后台 `pullBareIntoWorkspace`。
-- **主机和成员走两条不同代码路径**：主机不能走 `SyncClient.sync` 的网络分支，会自己连自己把仓库锁死。
+**全互联 P2P（full mesh）：没有主机，没有成员，每个装的设备都是节点。**
+
+- **节点身份 = SSH 密钥**。`identity.json` 里那对 RSA-2048 就是这台设备的身份，
+  `nodeId = "SHA256:" + base64(sha256(公钥 blob))`（去掉 padding）。公钥即名片，私钥不出口。
+- **每个节点都在 7411 上跑同一个 `MeshServer`**：`/node.git`（smart HTTP）、`/mesh/join`、
+  `/mesh/info`、`/mesh/hello`。谁都不是「服务端」，谁都能被别人连。
+- **每个节点有自己的裸仓库 `node.git`**，它是「我这条链看到的世界」。
+  工作区 `repo/` 编辑后 → `commitAll` → `pushWorkspaceToBare()` 镜像进 `node.git`；
+  对端 push 进来 → `postReceive` 后台 `pullBareIntoWorkspace()` 回灌到工作区。
+- **两两同步**：`MeshSync.syncAll` 对名册里每个对端跑 `fetch → merge → push`，
+  串行执行（JGit 对同一仓库并发会抢 lock，家用 3–5 台串行完全够快）。
+- **家庭密钥 `secret`** 是成员资格的根：`groupTag = HMAC(secret,"kn-group-tag")` 用来
+  快速认出「是不是一家」，`inviteCode = HMAC(secret,"kn-invite")` 派生 8 位加入码。
+  加入码是**派生**的，不是存的 —— 换设备只要 secret 还在，码就不变。
+- **加入流程**：新节点扫描 `/24` → `GET /mesh/hello`（唯一不验签的探针，只回
+  app/version/nodeId/名字/是否有组）→ 选定目标后 `POST /mesh/join`，带上自己的公钥和加入码 →
+  对方验码通过，用**加入者的公钥**把 secret 封（RSA-OAEP-SHA256）回 `sealedSecret`，
+  并附上**它自己的** nodeId/公钥/端口与它认识的名册。
+- **请求鉴权三层**（`MeshGuard`）：① `SHA256withRSA` 验签，证明持有私钥；
+  ② 公钥必须在本地名册里，证明是这个家的；③ 时间戳 5 分钟内 + nonce 未用过，挡重放。
+  头格式 `Authorization: Kn1 <nodeId> <timeMs> <nonce> <sig>`，签名内容
+  `"KN1\n<scope>\n<timeMs>\n<nonce>"`。`/node.git*` 全部共用 scope `"git"`。
+- **名册靠通话补齐**：没有广播通道，所以每次同步顺手 `GET /mesh/info` 拉对端名册，
+  把「它认识的人」和自己并进来，地址自然收敛。
 - 菜谱（`dishes/`）和菜单（`menus/`）在同一个 git 工作区里，一次 `commitAll` 同时提交两边。
   但**每个改动点都必须显式调 `commitAndPush`**——新建/编辑/删除已有，菜单侧
   `createMenu` / `toggleMenuRecipe` / `setMenuSlot` / `setMenuDate` /
   `toggleMenuStaple` / `setMenuNote` 也都接了；漏掉任何一个，那类改动就只落在
   本地磁盘、不会进 git，直到下一次全量 `commitAll`（定时同步）才补上。
 - **定时同步**：`ViewModel.restartAutoSync()` 按 `autoSyncMinutes` 起轮询协程，
-  成员/主机都走 `runSync(silent=true)`；静默时只在拉到新数据或发生仲裁才弹提示，
+  都走 `runSync(silent=true)`；静默时只在拉到新数据或发生仲裁才弹提示，
   网络错误完全静默。`updateSettings` 改同步相关设置时会重建这个协程。
   没加家庭组时协程不起，省电。
-- **主机 UI 自动刷新**：成员 push → `postReceive` 钩子后台 `pullBareIntoWorkspace` →
-  `GitServerHost.onRemoteChange` 回调（由 `DishViewModel.server()` 注入）→
-  `reload()`。主机用户在家人改完的瞬间就能看到新数据，不用等下次手动同步。
+- **UI 自动刷新**：对端 push → `postReceive` 后台 `pullBareIntoWorkspace` →
+  `MeshServer.onWorkspacePulled` 回调 → `reload()`。家人改完的瞬间就能看到，
+  不用等下次手动同步。这个回调对**每个**节点都要接（包括当初「创建家庭」的那台）。
 - **冲突仲裁覆盖两边**：`resolveConflictsKeepingNewest()` 同时扫 `dishes/` 和
   `menus/`（泛化成 `resolveDir(dir, serializer)`）。只扫 dishes 的话，
   两边同时改同一餐会让菜单 JSON 带冲突标记，反序列化失败被 `runCatching` 吞掉，
   表现为「菜单凭空消失」。
-- 启动自动同步：`boot()` 里 HOST 先把服务拉起来 + 主动 `hostSync` 一次
-  （不只是 startHost，否则成员上次推的数据要等第一次轮询才进来），
-  MEMBER 走 `syncOnLaunch`。
+- 启动：`boot()` 里只要有家庭组就把节点服务拉起来再同步一轮（顺序不能反：
+  服务不起对端推不进来，不先同步上次的数据要等第一次轮询）。
+- 菜谱（`dishes/`）和菜单（`menus/`）在同一个 git 工作区里，一次 `commitAll` 同时提交两边。
+  但**每个改动点都必须显式调 `commitAndPush`**——新建/编辑/删除已有，菜单侧
+  `createMenu` / `toggleMenuRecipe` / `setMenuSlot` / `setMenuDate` /
+  `toggleMenuStaple` / `setMenuNote` 也都接了；漏掉任何一个，那类改动就只落在
+  本地磁盘、不会进 git，直到下一次全量 `commitAll`（定时同步）才补上。
+- **定时同步**：`ViewModel.restartAutoSync()` 按 `autoSyncMinutes` 起轮询协程，
+  都走 `runSync(silent=true)`；静默时只在拉到新数据或发生仲裁才弹提示，
+  网络错误完全静默。`updateSettings` 改同步相关设置时会重建这个协程。
+  没加家庭组时协程不起，省电。
+- **UI 自动刷新**：对端 push → `postReceive` 后台 `pullBareIntoWorkspace` →
+  `MeshServer.onWorkspacePulled` 回调 → `reload()`。家人改完的瞬间就能看到，
+  不用等下次手动同步。这个回调对**每个**节点都要接（包括当初「创建家庭」的那台）。
+- **冲突仲裁覆盖两边**：`resolveConflictsKeepingNewest()` 同时扫 `dishes/` 和
+  `menus/`（泛化成 `resolveDir(dir, serializer)`）。只扫 dishes 的话，
+  两边同时改同一餐会让菜单 JSON 带冲突标记，反序列化失败被 `runCatching` 吞掉，
+  表现为「菜单凭空消失」。
+- 启动：`boot()` 里只要有家庭组就把节点服务拉起来再同步一轮（顺序不能反：
+  服务不起对端推不进来，不先同步上次的数据要等第一次轮询）。
 
 ## i18n
 
@@ -275,7 +324,7 @@ filesDir/store/
     传 `true` 会给工作区仓库的 config 写下 `core.bare = true`，之后所有
     `git.add()` / `commit()` 都抛
     `NoWorkTreeException: Bare Repository has neither a working tree, nor an index`。
-    表现是「创建家庭后主机起不来」，而且**标记在磁盘上，重装 App（不清 files）也不自愈**。
+    表现是「创建家庭后服务起不来」，而且**标记在磁盘上，重装 App（不清 files）也不自愈**。
     正确写法是 `create(false)`；`ensureInitialized` 里另有 `healBareFlag()`
     在每次初始化时主动纠正存量损坏数据（只改 bare 位，不动 objects/refs）。
 
@@ -285,10 +334,10 @@ filesDir/store/
       `setRepositoryResolver()` 设的解析器（`assertNotInitialized` 只拦 init 之后的调用）；
     - glue 层的 `RepositoryFilter` 拿**整个** `getPathInfo()` 当仓库名，
       而 `SuffixPipeline` 又拿同一个 `getPathInfo()` 做 `endsWith` 匹配 ——
-      想同时满足「名字只是 `grocery.git`」和「路径以 `/info/refs` 结尾」是不可能的。
+      想同时满足「名字只是 `node.git`」和「路径以 `/info/refs` 结尾」是不可能的。
     正确做法是直接实现三个端点，用 `UploadPack` / `ReceivePack`：
-    `GET /grocery.git/info/refs?service=…`、`POST /grocery.git/git-upload-pack`、
-    `POST /grocery.git/git-receive-pack`。servlet 只是 git 协议的包装层，不是必需的。
+    `GET /node.git/info/refs?service=…`、`POST /node.git/git-upload-pack`、
+    `POST /node.git/git-receive-pack`。servlet 只是 git 协议的包装层，不是必需的。
 
 28. **`UploadPack.upload(in, out, msgOut)` 的第三个参数必须传 `null`。**
     JGit 在 `uploadWithExceptionPropagation` 里会把 `out` 包成 `rawOut`，
@@ -298,15 +347,54 @@ filesDir/store/
     传 `DisabledOutputStream` 则报 `IllegalStateException: Writing not permitted`。
     两个输出都指向同一实例也不行 —— chunk 边界会交错。
 
-29. **验证主机模式必须用真实 git 客户端，不能只看 HTTP 200。**
+29. **验证同步必须用真实 git 客户端，不能只看 HTTP 200。**
     曾经 `info/refs` 返回了合法的 pkt-line 广告，但 `git clone` 立刻挂在
-    `UploadPack` 上。调试顺序：
+    `UploadPack` 上。调试顺序（P2P 版，`/node.git` 需要签名头）：
     ```bash
     adb forward tcp:17411 tcp:7411
-    git clone http://127.0.0.1:17411/grocery.git /tmp/gc      # fetch 链路
-    cd /tmp/gc && git commit --allow-empty -m x && git push    # push 链路
-    # 再回主机确认工作区已出现成员提交（post-receive → pullBareIntoWorkspace）
+    # 用设备身份签一条 Kn1 头（内容 "KN1\ngit\n<timeMs>\n<nonce>"，SHA256withRSA）
+    H="Kn1 <nodeId> <timeMs> <nonce> <sig>"
+    git -c "http.extraHeader=Authorization: $H" clone http://127.0.0.1:17411/node.git /tmp/gc
+    cd /tmp/gc && git commit --allow-empty -m x \
+      && git -c "http.extraHeader=Authorization: $H" push origin master
+    # 再回设备确认工作区已出现这条提交（post-receive → pullBareIntoWorkspace）
     ```
+    只有 `ls-remote` 能过不代表 clone 能过 —— 差的那一步正是 push/upload-pack。
+
+30. **`adb forward` 看到的来源是 `127.0.0.1`，绝不能写进对端名册。**
+    `noteSeen` / `addPeer` 拿 `call.remote` 补地址，经过 adb 转发时它是回环地址。
+    写进去之后所有同步都往自己身上打，正确地址被覆盖 —— 表现为
+    「加入成功、之后再也没同步过」。两处都要显式跳过 `127.*` / `::1`。
+
+31. **`/mesh/info` 的 `peers` 里没有对端自己。** 没人会把自己写进自己的名册，
+    但加入之后所有请求都要用它的公钥验签。`/mesh/join` 必须额外返回
+    `selfNodeId` / `selfPublicKey` / `selfPort`，`/mesh/info` 的客户端也要把
+    顶层字段转成一条 peer 加进名册。少了这步会得到一条公钥为空的僵尸名册项，
+    之后跟它对不上账、永远同步失败。
+
+32. **`Repository.resolve(HEAD)` 在 HEAD 指向不存在的分支时会抛异常，不返回 null。**
+    旧仓库迁移过来很常见。要 `runCatching { }.getOrNull()`，否则建裸仓库时直接失败。
+
+33. **迁移旧裸仓库不能只看目录名。** 早期版本把成员名册
+    （`members.json` / `authorized_keys` / `meta.json`）放在 `grocery.git`
+    这个**同名目录**里，它从来就不是 git 仓库。盲目 rename 成 `node.git` 之后，
+    `ensureBare` 会当仓库打开，写第一个对象时抛
+    `IOException: No such file or directory` —— 而且是在 `TreeFormatter.insert`
+    内部炸，栈里完全看不出跟目录结构有关。判定哨兵用「`objects/` 是否存在」，
+    不是「目录是否存在」。
+
+34. **JGit 客户端对 `git-upload-pack` / `git-receive-pack` 的请求体做 gzip。**
+    它默认对面是真实的 `git-http-backend`，会带 `Content-Encoding: gzip`。
+    手写服务器不解压，等于把压缩字节喂给 `UploadPack.upload()`，报
+    `IOException: Invalid packet line header: ?<garbage>` —— 看着像协议实现错了，
+    实际只差一层 `GZIPInputStream`。`readBody` 里按 `Content-Encoding` 解码。
+
+35. **nonce 的复用粒度是「同一种请求」，不是整个会话。**
+    一开始做成全局一次性，`ls-remote` 能过但 `clone` 必 403：一次 clone 会发
+    `GET info/refs` 和 `POST git-upload-pack` 两个请求，而 JGit 的
+    `setAdditionalHeaders` 是 per-Transport 的静态 map，两个请求带的是**同一个
+    Authorization / 同一个 nonce**，第二个必定被重放检测拒掉。这不是客户端能修的。
+    现在 claim 的 key 是 `nonce|method|pathClass`，仍然挡住「拿抓包换端点换操作」。
 
 ## 权限
 

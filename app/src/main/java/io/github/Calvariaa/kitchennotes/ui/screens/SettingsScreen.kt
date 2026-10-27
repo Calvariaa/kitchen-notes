@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -66,7 +67,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.Calvariaa.kitchennotes.R
 import io.github.Calvariaa.kitchennotes.ai.DeepSeekClient
-import io.github.Calvariaa.kitchennotes.data.FamilyGroup
+import io.github.Calvariaa.kitchennotes.data.Peer
 import io.github.Calvariaa.kitchennotes.sync.SshKeyFactory
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
 import io.github.Calvariaa.kitchennotes.ui.components.DrawerMenuButton
@@ -102,8 +103,10 @@ fun SettingsScreen(
     val identity by vm.identity.collectAsState()
     val group by vm.group.collectAsState()
     val aiResult by vm.aiTestResult.collectAsState()
-    val hostRunning by vm.hostRunning.collectAsState()
-    val hostAddresses by vm.hostAddresses.collectAsState()
+    val nodeServing by vm.nodeServing.collectAsState()
+    val nodeAddresses by vm.nodeAddresses.collectAsState()
+    val peers by vm.peers.collectAsState()
+    val inviteCode = vm.inviteCode
     val syncMessage by vm.syncMessage.collectAsState()
     val aiTestOk by vm.aiTestOk.collectAsState()
     val update by vm.update.collectAsState()
@@ -384,95 +387,154 @@ fun SettingsScreen(
                     )
 
                     val g = group
-                    when (g?.role) {
-                        FamilyGroup.Role.HOST -> {
+                    if (g == null) {
+                        Text(
+                            stringResource(R.string.settings_no_group),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = { showHostNameDialog = true },
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text(stringResource(R.string.settings_become_host)) }
+                            OutlinedButton(
+                                onClick = { showJoinChoice = true },
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text(stringResource(R.string.settings_join_group)) }
+                        }
+                    } else {
+                        // 每家设备都是节点：显示监听状态，而不是「你是不是主机」
+                        Text(
+                            stringResource(
+                                if (nodeServing) R.string.settings_host_running
+                                else R.string.settings_host_stopped,
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            stringResource(R.string.settings_joined_group, g.name),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        // 加入码：由家庭密钥派生，全家一致。谁都能念给别人，换设备也不变
+                        Text(
+                            stringResource(R.string.settings_join_code, inviteCode),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                stringResource(
-                                    if (hostRunning) R.string.settings_host_running
-                                    else R.string.settings_host_stopped,
-                                ),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
+                                stringResource(R.string.settings_invite_hint),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
                             )
-                            if (hostAddresses.isNotEmpty()) {
-                                Text(
-                                    stringResource(R.string.settings_host_addresses),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            IconButton(
+                                onClick = { clipboard.setText(AnnotatedString(inviteCode)) },
+                                enabled = inviteCode.isNotBlank(),
+                            ) {
+                                Icon(
+                                    Icons.Filled.ContentCopy,
+                                    contentDescription = stringResource(R.string.action_copy),
+                                    modifier = Modifier.size(16.dp),
                                 )
-                                hostAddresses.forEach { addr ->
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            addr,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.weight(1f),
+                            }
+                        }
+
+                        if (nodeAddresses.isNotEmpty()) {
+                            Text(
+                                stringResource(R.string.settings_my_addresses),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            nodeAddresses.forEach { addr ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        addr,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    IconButton(
+                                        onClick = { clipboard.setText(AnnotatedString(addr)) },
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.ContentCopy,
+                                            contentDescription = stringResource(R.string.action_copy),
+                                            modifier = Modifier.size(16.dp),
                                         )
-                                        IconButton(
-                                            onClick = { clipboard.setText(AnnotatedString(addr)) },
-                                        ) {
+                                    }
+                                }
+                            }
+                        }
+
+                        // 成员列表。selfNodeId 标出「这台」，其余是家人。
+                        // 谁在线不看名字看地址刷新时间 —— peers 里的 lastSeenAt 由对端请求刷新
+                        val selfId = vm.selfNodeId
+                        Text(
+                            stringResource(R.string.settings_peers_title),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (peers.isEmpty()) {
+                            Text(
+                                stringResource(R.string.settings_peers_empty),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            peers.forEach { peer ->
+                                val isSelf = peer.nodeId == selfId
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            if (isSelf) {
+                                                stringResource(R.string.settings_peers_self)
+                                            } else {
+                                                peer.name.ifBlank { peer.email.ifBlank { peer.nodeId.take(16) } }
+                                            },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                        Text(
+                                            if (peer.address.isBlank() || !peer.isFresh) {
+                                                stringResource(R.string.settings_peer_offline)
+                                            } else {
+                                                peer.address
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    if (!isSelf) {
+                                        IconButton(onClick = { vm.forgetPeer(peer.nodeId) }) {
                                             Icon(
-                                                Icons.Filled.ContentCopy,
-                                                contentDescription = stringResource(R.string.action_copy),
+                                                Icons.Filled.Close,
+                                                contentDescription = stringResource(R.string.settings_forget_peer),
                                                 modifier = Modifier.size(16.dp),
                                             )
                                         }
                                     }
                                 }
                             }
-                            Text(
-                                stringResource(R.string.settings_join_code, g.token),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                OutlinedButton(
-                                    onClick = { identity?.let { vm.startHost(it, g.name) } },
-                                    shape = RoundedCornerShape(12.dp),
-                                ) { Text(stringResource(R.string.settings_restart_host)) }
-                                TextButton(onClick = { vm.stopHost() }) {
-                                    Text(stringResource(R.string.settings_dissolve_group))
-                                }
-                            }
                         }
 
-                        FamilyGroup.Role.MEMBER -> {
-                            Text(
-                                stringResource(R.string.settings_joined_group, g.name),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                stringResource(R.string.settings_host_address, g.hostAddress),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Button(
-                                    onClick = { vm.runSync() },
-                                    shape = RoundedCornerShape(12.dp),
-                                ) { Text(stringResource(R.string.settings_sync_now)) }
-                                TextButton(onClick = { vm.leaveGroup() }) {
-                                    Text(stringResource(R.string.settings_leave_group))
-                                }
-                            }
-                        }
-
-                        else -> {
-                            Text(
-                                stringResource(R.string.settings_no_group),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Button(
-                                    onClick = { showHostNameDialog = true },
-                                    shape = RoundedCornerShape(12.dp),
-                                ) { Text(stringResource(R.string.settings_become_host)) }
-                                OutlinedButton(
-                                    onClick = { showJoinChoice = true },
-                                    shape = RoundedCornerShape(12.dp),
-                                ) { Text(stringResource(R.string.settings_join_group)) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = { vm.runSync() },
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text(stringResource(R.string.settings_sync_now)) }
+                            OutlinedButton(
+                                onClick = { identity?.let { vm.createGroup(it, g.name) } },
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text(stringResource(R.string.settings_restart_host)) }
+                            TextButton(onClick = { vm.leaveGroup() }) {
+                                Text(stringResource(R.string.settings_leave_group))
                             }
                         }
                     }
@@ -738,7 +800,7 @@ fun SettingsScreen(
         onDismiss = { showHostNameDialog = false },
         onConfirm = { name ->
             showHostNameDialog = false
-            identity?.let { vm.startHost(it, name) }
+            identity?.let { vm.createGroup(it, name) }
         },
     )
 }

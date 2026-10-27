@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -17,7 +18,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.Calvariaa.kitchennotes.KitchenNotesApp
 import io.github.Calvariaa.kitchennotes.R
-import io.github.Calvariaa.kitchennotes.data.FamilyGroup
 import io.github.Calvariaa.kitchennotes.ui.components.AppDrawer
 import io.github.Calvariaa.kitchennotes.ui.components.DrawerDestination
 import io.github.Calvariaa.kitchennotes.ui.i18n.ProvideAppLocale
@@ -144,12 +144,12 @@ fun KitchenNotesRoot() {
                 currentRoute == Routes.MENUS ||
                 currentRoute == Routes.SETTINGS
 
-            val headerSubtitle = group?.let {
-                when (it.role) {
-                    FamilyGroup.Role.HOST -> stringResource(R.string.list_role_host, it.name)
-                    FamilyGroup.Role.MEMBER -> stringResource(R.string.list_role_member, it.name)
-                    FamilyGroup.Role.NONE -> null
-                }
+            // P2P 下没有角色，副标题就是「你在哪个家庭组」+ 成员数。
+            // 这些成员数来自 peers 名册，不是对端的说法，所以直接数是可信的
+            val peers by vm.peers.collectAsStateWithLifecycle()
+            val headerSubtitle = group?.name?.takeIf { it.isNotBlank() }?.let { name ->
+                if (peers.isEmpty()) name
+                else stringResource(R.string.list_role_member, name, peers.size)
             }
 
             AppDrawer(

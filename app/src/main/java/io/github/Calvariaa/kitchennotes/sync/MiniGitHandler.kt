@@ -2,7 +2,6 @@ package io.github.Calvariaa.kitchennotes.sync
 
 import android.util.Log
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
-import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.transport.PacketLineOut
 import org.eclipse.jgit.transport.ReceivePack
 import org.eclipse.jgit.transport.RefAdvertiser.PacketLineOutRefAdvertiser
@@ -11,36 +10,39 @@ import org.eclipse.jgit.transport.UploadPack
 /**
  * 直接实现 git smart HTTP 的三个端点，不做 Servlet 适配。
  *
- * **为什么不复用 JGit 的 `GitServlet`**：它是给真实 Servlet 容器写的，内部 glue 层
- * （MetaFilter / UrlPipeline / RepositoryFilter）假设 `getPathInfo()` 里「仓库名」与
- * 「剩余路径」的切分由容器完成，而且 `GitFilter.init()` 会**无条件**用
- * `FileResolver(base-path)` 覆盖外部通过 `setRepositoryResolver` 挂的解析器。
- * 在自建 HTTP 服务器上凑这些前提，试错成本远高于直接用 `UploadPack` / `ReceivePack`
- * —— 那才是 git 协议的真实入口，servlet 只是它的包装层。
+ * **为什么不复用 JGit 的 `GitServlet`**：它是给真实 Servlet 容器写的，两个硬障碍：
+ *  - `GitFilter.init()` 会**无条件**用 `FileResolver(base-path)` 覆盖外部
+ *    `setRepositoryResolver()` 设的解析器；
+ *  - glue 层拿**整个** `getPathInfo()` 当仓库名，又拿同一个值做 `endsWith` 匹配，
+ *    「名字只是 `node.git`」和「路径以 `/info/refs` 结尾」不可能同时满足。
+ * 直接用 `UploadPack` / `ReceivePack` 才是 git 协议的真实入口，servlet 只是包装层。
  *
- * 端点（git 客户端协商的固定协议）：
- *  - `GET  /grocery.git/info/refs?service=git-upload-pack`   拉取广告
- *  - `GET  /grocery.git/info/refs?service=git-receive-pack`  推送广告
- *  - `POST /grocery.git/git-upload-pack`                     fetch 数据传输
- *  - `POST /grocery.git/git-receive-pack`                    push 数据传输
+ * 端点（git 客户端协商的固定路径）：
+ *  - `GET  /node.git/info/refs?service=git-upload-pack`   拉取广告
+ *  - `GET  /node.git/info/refs?service=git-receive-pack`  推送广告
+ *  - `POST /node.git/git-upload-pack`                     fetch 数据传输
+ *  - `POST /node.git/git-receive-pack`                    push 数据传输
  *
  * 响应体是 pkt-line 流，长度事先不可知 → 必须 chunked（见 [HttpCall.streamHeaders]）。
+ *
+ * **P2P 语义**：这里读写的仓库是本机的裸仓库 `node.git`（[MeshRepo]）。
+ * 对端 push 进来后立刻合并回工作区 —— 因为是全网格，任何节点都可能既是
+ * 提供方又是接收方，没有「主机才做 pull」的特权。
  */
 internal class MiniGitHandler(
-    private val repository: Repository,
-    private val host: GitServerHost,
+    private val meshRepo: MeshRepo,
+    private val server: MeshServer,
 ) {
-    /** 主机身份，post-receive 拉取时用作署名兜底 */
+    /** 节点身份，post-receive 拉取时用作署名兜底 */
     @Volatile
     var currentIdentity: UserIdentity =
         UserIdentity(name = "dish", email = "dish@localhost")
 
-    /** 成员 push 后、工作区已 pull 完成的回调（用于通知 UI 刷新） */
+    /** 对端 push 后、工作区已合并完成的回调（通知 UI 刷新） */
     @Volatile
     var onWorkspacePulled: (() -> Unit)? = null
 
-    /** 仓库名前缀，三个端点都挂在它下面 */
-    val prefix: String = "/grocery.git"
+    val prefix: String = "/node.git"
 
     fun handle(call: HttpCall) {
         val sub = call.path.removePrefix(prefix)
@@ -63,8 +65,7 @@ internal class MiniGitHandler(
             return
         }
         val kind = when (service) {
-            "git-upload-pack" -> service
-            "git-receive-pack" -> service
+            "git-upload-pack", "git-receive-pack" -> service
             else -> {
                 call.respondText(403, "service not enabled: $service")
                 return
@@ -73,21 +74,26 @@ internal class MiniGitHandler(
 
         val out = call.streamHeaders(200, "application/x-$kind-advertisement") ?: return
         out.use { body ->
-            // smart HTTP 广告以 "# service=..." 开头，空行之后才是真正的 ref 列表
-            val pkt = PacketLineOut(body)
-            pkt.writeString("# service=$kind\n")
-            pkt.end()
-
-            if (kind == "git-upload-pack") {
-                val up = UploadPack(repository)
-                up.setBiDirectionalPipe(false)
-                up.sendAdvertisedRefs(PacketLineOutRefAdvertiser(pkt))
-            } else {
-                val rp = ReceivePack(repository)
-                rp.setBiDirectionalPipe(false)
-                rp.sendAdvertisedRefs(PacketLineOutRefAdvertiser(pkt))
+            val repo = runCatching { meshRepo.openBare() }.getOrNull()
+            if (repo == null) {
+                call.respondText(500, "repository unavailable")
+                return
             }
-            body.flush()
+            repo.use {
+                // smart HTTP 广告以 "# service=..." 开头，空行之后才是真正的 ref 列表
+                val pkt = PacketLineOut(body)
+                pkt.writeString("# service=$kind\n")
+                pkt.end()
+
+                if (kind == "git-upload-pack") {
+                    UploadPack(repo).also { it.setBiDirectionalPipe(false) }
+                        .sendAdvertisedRefs(PacketLineOutRefAdvertiser(pkt))
+                } else {
+                    ReceivePack(repo).also { it.setBiDirectionalPipe(false) }
+                        .sendAdvertisedRefs(PacketLineOutRefAdvertiser(pkt))
+                }
+                body.flush()
+            }
         }
     }
 
@@ -96,21 +102,19 @@ internal class MiniGitHandler(
     private fun uploadPack(call: HttpCall) {
         val out = call.streamHeaders(200, "application/x-git-upload-pack-result") ?: return
         out.use { body ->
-            try {
-                val up = UploadPack(repository)
-                up.setBiDirectionalPipe(false)
-                // 三个参数分别是 in / out / msgOut。
-                // msgOut 必须传 null：JGit 在 uploadWithExceptionPropagation 里会把 out
-                // 包成 rawOut，客户端协商了 side-band 时它自己造 SideBandOutputStream
-                // （进度走 band 2、pack 走 band 1）。外部塞进来的流会被直接当原始通道用，
-                // 进度文本没经过 pkt 分帧 → 客户端报
-                // "bad line length character: Tota"。
-                up.upload(call.body.inputStream(), body, null)
-            } catch (t: Throwable) {
-                // chunked 已经开始，状态码改不了了，只能记录
-                Log.w(TAG, "upload-pack failed", t)
-            }
-            body.flush()
+            runCatching {
+                meshRepo.openBare().use { repo ->
+                    val up = UploadPack(repo)
+                    up.setBiDirectionalPipe(false)
+                    // 三个参数是 in / out / msgOut。
+                    // msgOut 必须传 null：JGit 在 uploadWithExceptionPropagation 里会把 out
+                    // 包成 rawOut，客户端协商 side-band 时它自己造 SideBandOutputStream
+                    // （进度走 band 2、pack 走 band 1）。外部塞流进去会被当原始通道直写，
+                    // 进度文本没有 pkt 分帧 → 客户端报 "bad line length character: Tota"。
+                    up.upload(call.body.inputStream(), body, null)
+                }
+            }.onFailure { Log.w(TAG, "upload-pack failed", it) }
+            runCatching { body.flush() }
         }
     }
 
@@ -119,25 +123,25 @@ internal class MiniGitHandler(
     private fun receivePack(call: HttpCall) {
         val out = call.streamHeaders(200, "application/x-git-receive-pack-result") ?: return
         out.use { body ->
-            try {
-                val rp = ReceivePack(repository)
-                rp.setBiDirectionalPipe(false)
-                rp.setPostReceiveHook { _, _ ->
-                    // 成员推完，主机工作区要跟上；后台线程做，别阻塞 HTTP 响应
-                    Thread {
-                        runCatching {
-                            kotlinx.coroutines.runBlocking {
-                                host.pullBareIntoWorkspace(currentIdentity)
+            runCatching {
+                meshRepo.openBare().use { repo ->
+                    val rp = ReceivePack(repo)
+                    rp.setBiDirectionalPipe(false)
+                    rp.setPostReceiveHook { _, _ ->
+                        // 对端推完，本机工作区要跟上。后台线程做，别阻塞 HTTP 响应
+                        Thread {
+                            runCatching {
+                                kotlinx.coroutines.runBlocking {
+                                    meshRepo.pullBareIntoWorkspace()
+                                }
                             }
-                        }
-                        onWorkspacePulled?.invoke()
-                    }.also { it.isDaemon = true }.start()
+                            onWorkspacePulled?.invoke()
+                        }.also { it.isDaemon = true }.start()
+                    }
+                    rp.receive(call.body.inputStream(), body, null)
                 }
-                rp.receive(call.body.inputStream(), body, null)
-            } catch (t: Throwable) {
-                Log.w(TAG, "receive-pack failed", t)
-            }
-            body.flush()
+            }.onFailure { Log.w(TAG, "receive-pack failed", it) }
+            runCatching { body.flush() }
         }
     }
 

@@ -13,20 +13,33 @@ import java.util.UUID
  * 仓库目录布局（同时也是 git 工作区布局）：
  *
  * ```
- * appFiles/                      <- App 私有目录，其中 grocery.git 是裸仓库
- *   repo/                        <- 工作区（git work tree）
- *     dishes/<id>.json           <- 一条菜谱一个 JSON 文件
- *     images/<yyyy>/<MM>/<sha8>.<ext>  <- 图片，按内容散列命名，天然去重
- *     .git/                      <- JGit 仓库
- *   grocery.git/                 <- 主机模式下的裸仓库（供其他设备 push/pull）
+ * appFiles/store/
+ *   repo/                        <- 工作区（git work tree）；UI 读的就是这里
+ *     dishes/<id>.json
+ *     menus/<id>.json
+ *     images/<yyyy>/<MM>/<sha8>.<ext>
+ *     .git/
+ *   node.git/                    <- 本机对外的裸仓库，P2P 对端 fetch/push 的目标
+ *   mesh/                        <- 节点身份与已知成员（公钥）
+ *   peers.json  family.json
  * ```
  *
+ * P2P 下每台设备都有 `node.git`，没有「只有主机才有」的目录了。
  * 图片命名用内容散列：同一张图重复上传不会产生新对象，git 里也不会膨胀。
  */
 object Paths {
     fun root(ctx: Context): File = File(ctx.filesDir, "store").apply { mkdirs() }
     fun repo(ctx: Context): File = File(root(ctx), "repo").apply { mkdirs() }
-    fun bare(ctx: Context): File = File(root(ctx), "grocery.git")
+
+    /** 本机对外的裸仓库。对端连 `http://<ip>:7411/node.git`，不必知道设备名 */
+    fun bare(ctx: Context): File = File(root(ctx), "node.git")
+
+    /** 主机模式时代的裸仓库。首次启动由 MeshRepo 迁移进 [bare] 后即废弃 */
+    fun legacyBare(ctx: Context): File = File(root(ctx), "grocery.git")
+
+    /** 节点身份与成员公钥。P2P 下每台设备都有，不再是主机专属 */
+    fun meshDir(ctx: Context): File = File(root(ctx), "mesh").apply { mkdirs() }
+
     fun dishesDir(ctx: Context): File = File(repo(ctx), "dishes").apply { mkdirs() }
     fun imagesDir(ctx: Context): File = File(repo(ctx), "images").apply { mkdirs() }
     fun inboxDir(ctx: Context): File = File(root(ctx), "inbox").apply { mkdirs() }

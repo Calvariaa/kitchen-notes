@@ -18,20 +18,21 @@ import io.github.Calvariaa.kitchennotes.ai.RecipeAssembler
 import io.github.Calvariaa.kitchennotes.ai.RecipeJsonRepair
 import io.github.Calvariaa.kitchennotes.data.AppSettings
 import io.github.Calvariaa.kitchennotes.data.CookedRecord
-import io.github.Calvariaa.kitchennotes.data.DiscoveredHost
-import io.github.Calvariaa.kitchennotes.data.FamilyGroup
 import io.github.Calvariaa.kitchennotes.data.ImageIngestor
 import io.github.Calvariaa.kitchennotes.data.MealSlot
 import io.github.Calvariaa.kitchennotes.data.Menu
 import io.github.Calvariaa.kitchennotes.data.MenuItem
+import io.github.Calvariaa.kitchennotes.data.MeshGroup
 import io.github.Calvariaa.kitchennotes.data.Paths
+import io.github.Calvariaa.kitchennotes.data.Peer
 import io.github.Calvariaa.kitchennotes.data.Recipe
 import io.github.Calvariaa.kitchennotes.data.RecipeSort
 import io.github.Calvariaa.kitchennotes.data.Staple
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import io.github.Calvariaa.kitchennotes.data.sharedJson
-import io.github.Calvariaa.kitchennotes.sync.GitServerHost
-import io.github.Calvariaa.kitchennotes.sync.MembersApi
+import io.github.Calvariaa.kitchennotes.sync.DiscoveredNode
+import io.github.Calvariaa.kitchennotes.sync.MeshApi
+import io.github.Calvariaa.kitchennotes.sync.MeshCrypto
 import io.github.Calvariaa.kitchennotes.sync.SshKeyFactory
 import io.github.Calvariaa.kitchennotes.sync.SyncError
 import io.github.Calvariaa.kitchennotes.ui.i18n.UiText
@@ -176,8 +177,12 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
-    private val _group = MutableStateFlow<FamilyGroup?>(null)
-    val group: StateFlow<FamilyGroup?> = _group.asStateFlow()
+    private val _group = MutableStateFlow<MeshGroup?>(null)
+    val group: StateFlow<MeshGroup?> = _group.asStateFlow()
+
+    /** 家庭成员（对等节点）。含本机，UI 用 [selfNodeId] 区分「这台」 */
+    private val _peers = MutableStateFlow<List<Peer>>(emptyList())
+    val peers: StateFlow<List<Peer>> = _peers.asStateFlow()
 
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
@@ -185,25 +190,35 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private val _syncMessage = MutableStateFlow<UiText?>(null)
     val syncMessage: StateFlow<UiText?> = _syncMessage.asStateFlow()
 
-    private val _discovered = MutableStateFlow<List<DiscoveredHost>>(emptyList())
-    val discovered: StateFlow<List<DiscoveredHost>> = _discovered.asStateFlow()
+    private val _discovered = MutableStateFlow<List<DiscoveredNode>>(emptyList())
+    val discovered: StateFlow<List<DiscoveredNode>> = _discovered.asStateFlow()
 
     private val _scanning = MutableStateFlow(false)
     val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
 
-    private val _hostAddresses = MutableStateFlow<List<String>>(emptyList())
-    val hostAddresses: StateFlow<List<String>> = _hostAddresses.asStateFlow()
+    /** 本机对外地址（`ip:port`），给家人手输或展示用 */
+    private val _nodeAddresses = MutableStateFlow<List<String>>(emptyList())
+    val nodeAddresses: StateFlow<List<String>> = _nodeAddresses.asStateFlow()
 
-    private val _hostRunning = MutableStateFlow(false)
-    val hostRunning: StateFlow<Boolean> = _hostRunning.asStateFlow()
+    /** 本机服务端是否在监听。加入家庭后恒为 true，没有「主机开了没」的概念 */
+    private val _nodeServing = MutableStateFlow(false)
+    val nodeServing: StateFlow<Boolean> = _nodeServing.asStateFlow()
+
+    /** 本机 nodeId（SSH 公钥指纹）。UI 用来在成员列表里标出自己 */
+    val selfNodeId: String get() = _identity.value?.let { MeshCrypto.nodeId(it.sshPublicKey) }.orEmpty()
+
+    /** 加入码：由家庭密钥派生，全家一致，换设备重装都不变 */
+    val inviteCode: String get() = _group.value?.secret?.takeIf { it.isNotBlank() }
+        ?.let { MeshCrypto.inviteCode(it) }.orEmpty()
 
     /** 定时同步协程；设置里改了间隔或开关时要重建 */
     private var autoSyncJob: Job? = null
 
     /**
-     * 按 [AppSettings.autoSyncMinutes] 启动（或重启）定时同步。
-     * 0 = 关。主机和成员都走 [runSync]，区别只在 runSync 内部：
-     * 主机是「裸仓库 ↔ 工作区」，成员是「本机 ↔ 主机」。
+     * 按 [AppSettings.autoSyncMinutes] 启动（或重启）定时同步。0 = 关。
+     *
+     * P2P 下每个人做的是同一件事：和所有在线对端交换数据。
+     * 没有「主机走另一条路径」的分支了，所以这个协程对所有人行为一致。
      *
      * 为什么放在 ViewModel 而不是 Service：同步的前提是 App 已启动且用户可能在看列表，
      * ViewModel 的生命周期刚好覆盖这个窗口；做成后台 Service 反而要处理
@@ -214,9 +229,7 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         autoSyncJob = null
         val minutes = _settings.value.autoSyncMinutes
         if (minutes <= 0) return
-        val g = _group.value ?: return
-        // 没加家庭组时同步无意义，纯浪费电
-        if (g.role == FamilyGroup.Role.NONE) return
+        if (_group.value == null) return
         autoSyncJob = viewModelScope.launch {
             while (true) {
                 delay(minutes * 60_000L)
@@ -293,15 +306,14 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
             // 定时同步要等工作区就绪后再起；间隔/开关变了会重建
             restartAutoSync()
 
-            // 之前是主机的话，开机自动把服务拉起来，否则家庭组会「掉线」
+            // 已经是某个家的成员：开机就把本机节点服务拉起来（人人都是服务端），
+            // 然后同步一轮。这两步顺序不能反 —— 服务不起，对端推不进来；
+            // 不先同步，对端上次推的数据要等第一次定时轮询才出现。
             val g = _group.value
             val id = _identity.value
-            if (g?.role == FamilyGroup.Role.HOST && id != null) {
-                startHost(id, g.name)
-                // 启动时把裸仓库里成员的改动拉进工作区，主机自己也得同步一次
-                runSync(silent = true)
-            } else if (_settings.value.syncOnLaunch && g?.role == FamilyGroup.Role.MEMBER) {
-                runSync(silent = true)
+            if (g != null && id != null) {
+                startNodeServing(id, g)
+                if (_settings.value.syncOnLaunch) runSync(silent = true)
             }
             // 启动时静默查一次新版：只有真有更新才会出横幅，
             // 未命中时不写任何状态，列表页看起来和没有这个功能一样
@@ -868,71 +880,75 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     }
 
     // ---------------------------------------------------------------- 家庭组
+    // ---------------------------------------------------------------- 家庭组（P2P）
 
-    private fun server(): GitServerHost = app.gitServer ?: synchronized(this) {
-        app.gitServer ?: GitServerHost(
-            app.baseContext, app.settings, app.hostRepository, app.recipes, app.gitRepo,
-        ).also {
-            app.gitServer = it
-            // 成员 push 完成后，主机 UI 立刻反映新数据
-            it.onRemoteChange = { reload() }
+    /**
+     * 启动本机节点服务。
+     *
+     * P2P 下这不是「当主机」，而是「把自己挂到网上」—— 加入家庭后，
+     * 每台设备都要能被别人连上，否则它只是一个只读消费者，
+     * 别人改的东西永远到不了它（除非它主动去拉，而那要靠对方也开着）。
+     */
+    private suspend fun startNodeServing(id: UserIdentity, group: MeshGroup) {
+        val srv = app.meshServer
+        srv.onPeerChange = {
+            // 对端推完、工作区已合并 → 立刻刷新 UI，用户不用等下次手动同步
+            reload()
+            viewModelScope.launch { refreshPeers() }
+        }
+        srv.setGroupName(group.name)
+        srv.updateGroup(group)
+        srv.start(id, group)
+        _nodeServing.value = srv.running
+        _nodeAddresses.value = if (srv.running) srv.addresses() else emptyList()
+        if (!srv.running) {
+            _syncMessage.value = srv.lastError?.toUiText()
+                ?: UiText.of(R.string.sync_node_failed)
         }
     }
 
+    /** 从磁盘重读成员名册，UI 上的「家庭成员」列表跟它走 */
+    suspend fun refreshPeers() {
+        withContext(Dispatchers.IO) { runCatching { app.peerRegistry.all() } }
+            .onSuccess { _peers.value = it }
+    }
+
     /**
+     * 创建家庭：本机成为第一个节点。
+     *
      * @param groupName 家庭组名。调用方负责取本地化默认值（Compose 层能拿到 Resources），
      *   ViewModel 不该在这里编一个「我家厨房」—— 英文界面上会露出中文。
      */
-    fun startHost(id: UserIdentity, groupName: String) {
+    fun createGroup(id: UserIdentity, groupName: String) {
         viewModelScope.launch {
-            _syncMessage.value = UiText.of(R.string.sync_host_starting)
+            _syncMessage.value = UiText.of(R.string.sync_node_starting)
             try {
-                val srv = server()
-                srv.setGroupName(groupName)
-                srv.start(id)
-                _hostRunning.value = srv.running
-                if (srv.running) {
-                    val meta = app.hostRepository.readMeta()
-                    val port = _settings.value.serverPort
-                    val addresses = srv.localAddresses()
-                    _hostAddresses.value = addresses.map { "$it:$port" }
-                    val g = FamilyGroup(
-                        name = meta.groupName,
-                        role = FamilyGroup.Role.HOST,
-                        // 只用于本地展示。成员实际连的是扫描出来的地址，
-                        // 多网卡时（WiFi + 热点）第一个未必是家人所在的那段网
-                        hostAddress = _hostAddresses.value.firstOrNull() ?: "127.0.0.1:$port",
-                        token = meta.token,
-                        joinedAt = _group.value?.joinedAt ?: System.currentTimeMillis(),
-                    )
-                    app.settings.saveGroup(g)
-                    _group.value = g
-                    withContext(Dispatchers.IO) {
-                        app.gitRepo.commitAll(id, "recipe:host-init")
-                        srv.pushWorkspaceToBare(id)
-                    }
-                    _syncMessage.value = UiText.of(R.string.sync_host_started)
+                val group = app.groupManager.create(id, groupName)
+                _group.value = group
+                app.seedIfEmpty(id)
+                startNodeServing(id, group)
+                refreshPeers()
+                reload()
+                _syncMessage.value = if (_nodeServing.value) {
+                    UiText.of(R.string.sync_group_created)
                 } else {
-                    _syncMessage.value = srv.lastError?.toUiText()
-                        ?: UiText.of(R.string.sync_host_failed)
+                    UiText.of(R.string.sync_node_failed)
                 }
             } catch (t: Throwable) {
                 // viewModelScope 没有异常处理器，这里漏一个 catch 就是整个进程闪退（坑 15）
-                Log.w(TAG, "startHost failed", t)
-                _hostRunning.value = false
-                _syncMessage.value = UiText.of(R.string.sync_host_failed)
+                Log.w(TAG, "createGroup failed", t)
+                _nodeServing.value = false
+                _syncMessage.value = UiText.of(R.string.sync_node_failed)
             }
         }
     }
 
-    fun stopHost() {
+    /** 改名。家庭密钥不变 → 加入码不变 → 其他节点不用重新加入 */
+    fun renameGroup(name: String) {
         viewModelScope.launch {
-            server().stop()
-            _hostRunning.value = false
-            _hostAddresses.value = emptyList()
-            app.settings.clearGroup()
-            _group.value = null
-            _syncMessage.value = UiText.of(R.string.sync_host_stopped)
+            val updated = app.groupManager.rename(name) ?: return@launch
+            _group.value = updated
+            _syncMessage.value = UiText.of(R.string.sync_group_renamed)
         }
     }
 
@@ -941,48 +957,66 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
             _scanning.value = true
             _discovered.value = emptyList()
             try {
-                _discovered.value = app.lanDiscovery.scan()
+                _discovered.value = app.lanDiscovery.scan(selfNodeId)
+            } catch (t: Throwable) {
+                Log.w(TAG, "scan failed", t)
+                _discovered.value = emptyList()
             } finally {
                 _scanning.value = false
             }
         }
     }
 
-    fun joinGroup(host: DiscoveredHost, token: String) {
+    /**
+     * 加入家庭。申请方交出加入码，对端验过之后把家庭密钥用**我的公钥**封好回给我。
+     *
+     * 加入成功后本机立刻变成完整节点（也开服务、也能被别人连），
+     * 而不是像旧模型那样永远当只读成员。
+     */
+    fun joinGroup(target: DiscoveredNode, inviteCode: String) {
         viewModelScope.launch {
             val id = _identity.value ?: return@launch
             try {
-                _syncMessage.value = UiText.of(R.string.sync_joining, host.groupName)
-                val g = MembersApi(app.settings).join(host.address, token, id)
-                app.settings.saveGroup(g)
-                _group.value = g
-                withContext(Dispatchers.IO) {
-                    app.gitRepo.ensureInitialized(id)
-                    runCatching { app.syncClient.sync(id) }
-                }
+                _syncMessage.value = UiText.of(R.string.sync_joining, target.groupName)
+                val outcome = app.groupManager.join(id, target, inviteCode)
+                _group.value = outcome.group
+                _peers.value = outcome.peers
+                startNodeServing(id, outcome.group)
+                refreshPeers()
                 reload()
-                _syncMessage.value = UiText.of(R.string.sync_joined, g.name)
+                _syncMessage.value = UiText.of(R.string.sync_joined, outcome.group.name)
             } catch (e: SyncError) {
                 _syncMessage.value = e.toUiText()
             } catch (t: Throwable) {
+                Log.w(TAG, "joinGroup failed", t)
                 _syncMessage.value = t.message?.takeIf { it.isNotBlank() }
                     ?.let { UiText.raw(it) } ?: UiText.of(R.string.sync_join_failed)
             }
         }
     }
 
+    /**
+     * 离开家庭。**保留本地菜谱** —— 用户可能只是想换个组或误触，
+     * 删数据是不可逆的伤害，而重建一个家庭只要再点一次。
+     */
     fun leaveGroup() {
         viewModelScope.launch {
-            val g = _group.value
-            val id = _identity.value
-            if (g != null && id != null && g.role == FamilyGroup.Role.MEMBER) {
-                withContext(Dispatchers.IO) {
-                    runCatching { MembersApi(app.settings).leave(g.hostAddress, g.token, id.email) }
-                }
-            }
-            app.settings.clearGroup()
+            runCatching { app.groupManager.leave() }
             _group.value = null
+            _peers.value = emptyList()
+            _nodeServing.value = false
+            _nodeAddresses.value = emptyList()
+            autoSyncJob?.cancel()
+            autoSyncJob = null
             _syncMessage.value = UiText.of(R.string.sync_left)
+        }
+    }
+
+    /** 从名册里移除一个成员（不删对方数据，只是不再和它同步） */
+    fun forgetPeer(nodeId: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { runCatching { app.peerRegistry.remove(nodeId) } }
+            refreshPeers()
         }
     }
 
@@ -992,9 +1026,10 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
             _syncing.value = true
             if (!silent) _syncMessage.value = UiText.of(R.string.sync_in_progress)
             try {
-                val result = withContext(Dispatchers.IO) { app.sync() }
-                // 主机路径下 app.sync() 内部已经把成员提交并进工作区，必须重新读盘
+                val result = withContext(Dispatchers.IO) { app.sync(silent) }
+                // 同步可能把对端的提交合并进工作区，必须重新读盘
                 reload()
+                refreshPeers()
                 // 静默（定时）同步只在真有新数据或冲突时才弹提示，免得每 5 分钟刷一条
                 val notable = result.pulledCommits > 0 || result.conflictsResolved > 0
                 if (!silent || notable) {
@@ -1015,22 +1050,24 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         _syncMessage.value = null
     }
 
-    /** 本地改动后：提交 + 推送（成员）／推裸仓库（主机） */
+    /**
+     * 本地改动后：提交 + 推给自己和其他节点。
+     *
+     * 每个用户动作都必须走这里。漏掉一个入口，那类改动就只落在本地磁盘、
+     * 不进 git，直到下一次全量同步才补上（坑 24 的反例是 createMenu）。
+     * P2P 下后果更深：别人那边看起来就是「这条记录凭空消失」。
+     */
     private fun commitAndPush(message: String) {
         viewModelScope.launch {
             val id = _identity.value ?: return@launch
             withContext(Dispatchers.IO) { runCatching { app.gitRepo.commitAll(id, message) } }
-            val g = _group.value ?: return@launch
-            val s = _settings.value
-            if (!s.pushAfterEdit) return@launch
+            val g = _group.value
+            // 没加家庭也要镜像到本机裸仓库：之后建组时数据才现成可被拉取
+            withContext(Dispatchers.IO) { runCatching { app.meshRepo.pushWorkspaceToBare() } }
+            if (g == null) return@launch
+            if (!_settings.value.pushAfterEdit) return@launch
             withContext(Dispatchers.IO) {
-                runCatching {
-                    if (g.role == FamilyGroup.Role.HOST) {
-                        app.gitServer?.pushWorkspaceToBare(id)
-                    } else {
-                        app.syncClient.sync(id)
-                    }
-                }
+                runCatching { app.sync(silent = true) }
             }
             reload()
         }

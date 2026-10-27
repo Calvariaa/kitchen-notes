@@ -127,17 +127,40 @@ class SettingsStore(private val ctx: Context) {
 
     private val groupFile: File get() = File(Paths.root(ctx), "family.json")
 
-    fun group(): FamilyGroup? = runCatching {
-        if (groupFile.exists()) json.decodeFromString<FamilyGroup>(groupFile.readText()) else null
-    }.getOrNull()
+    fun group(): MeshGroup? = runCatching {
+        if (groupFile.exists()) json.decodeFromString<MeshGroup>(groupFile.readText()) else null
+    }.getOrNull()?.takeIf { it.isConfigured }
 
-    suspend fun saveGroup(group: FamilyGroup) = withContext(Dispatchers.IO) {
+    suspend fun saveGroup(group: MeshGroup) = withContext(Dispatchers.IO) {
         groupFile.parentFile?.mkdirs()
-        groupFile.writeText(json.encodeToString(FamilyGroup.serializer(), group))
+        groupFile.writeText(json.encodeToString(MeshGroup.serializer(), group))
     }
 
     suspend fun clearGroup() = withContext(Dispatchers.IO) {
         groupFile.delete()
         Unit
+    }
+
+    // ---------------- 已知节点 ----------------
+
+    private val peersFile: File get() = File(Paths.root(ctx), "peers.json")
+
+    fun peers(): List<Peer> = runCatching {
+        if (peersFile.exists()) json.decodeFromString<List<Peer>>(peersFile.readText()) else emptyList()
+    }.getOrDefault(emptyList())
+
+    suspend fun savePeers(peers: List<Peer>) = withContext(Dispatchers.IO) {
+        savePeersBlocking(peers)
+    }
+
+    /**
+     * 非挂起版本：PeerRegistry 的 HTTP 处理路径（同步上下文）要更新地址，
+     * 那里开不出协程。文件只有几十行，直接写比引入边界划算。
+     */
+    fun savePeersBlocking(peers: List<Peer>) {
+        peersFile.parentFile?.mkdirs()
+        peersFile.writeText(
+            json.encodeToString(kotlinx.serialization.builtins.ListSerializer(Peer.serializer()), peers),
+        )
     }
 }
