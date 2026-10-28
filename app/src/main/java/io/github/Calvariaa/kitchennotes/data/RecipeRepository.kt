@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.data
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -71,13 +72,22 @@ class RecipeRepository(private val ctx: Context) {
         isLenient = true
     }
 
+    private companion object {
+        const val TAG = "RecipeRepository"
+    }
+
     // ---------------------------------------------------------------- 读
 
     suspend fun all(): List<Recipe> = withContext(Dispatchers.IO) {
         val dir = Paths.dishesDir(ctx)
         dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }
             ?.mapNotNull { f ->
-                runCatching { json.decodeFromString<Recipe>(f.readText()) }.getOrNull()
+                runCatching { json.decodeFromString<Recipe>(f.readText()) }
+                    // 单个文件读坏了不能拖垮整个列表（一条坏记录不该让整页空白），
+                    // **但必须留日志**：静默吞掉会让「菜谱凭空消失」变成一个
+                    // 无从查证的幽灵问题 —— 磁盘上文件还在、界面上没有、日志里也没有。
+                    .onFailure { Log.w(TAG, "skip unreadable recipe file: ${f.name}", it) }
+                    .getOrNull()
             }
             ?.filter { !it.deleted }
             ?.sortedWith(compareByDescending<Recipe> { it.updatedAt })
@@ -86,7 +96,11 @@ class RecipeRepository(private val ctx: Context) {
 
     suspend fun allIncludingDeleted(): List<Recipe> = withContext(Dispatchers.IO) {
         Paths.dishesDir(ctx).listFiles { f -> f.isFile && f.name.endsWith(".json") }
-            ?.mapNotNull { f -> runCatching { json.decodeFromString<Recipe>(f.readText()) }.getOrNull() }
+            ?.mapNotNull { f ->
+                runCatching { json.decodeFromString<Recipe>(f.readText()) }
+                    .onFailure { Log.w(TAG, "skip unreadable recipe file: ${f.name}", it) }
+                    .getOrNull()
+            }
             ?: emptyList()
     }
 

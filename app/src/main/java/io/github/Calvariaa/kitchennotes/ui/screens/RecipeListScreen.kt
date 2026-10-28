@@ -62,6 +62,7 @@ import io.github.Calvariaa.kitchennotes.ui.i18n.text
 import io.github.Calvariaa.kitchennotes.update.UpdateInfo
 import io.github.Calvariaa.kitchennotes.ui.DishViewModel
 import io.github.Calvariaa.kitchennotes.ui.SortDialog
+import io.github.Calvariaa.kitchennotes.ui.components.ConflictDialog
 import io.github.Calvariaa.kitchennotes.ui.components.DrawerMenuButton
 import io.github.Calvariaa.kitchennotes.ui.components.EmptyRecipes
 import io.github.Calvariaa.kitchennotes.ui.components.RecipeCard
@@ -90,6 +91,7 @@ fun RecipeListScreen(
     val group by vm.group.collectAsStateWithLifecycle()
     val peers by vm.peers.collectAsStateWithLifecycle()
     val syncMessage by vm.syncMessage.collectAsStateWithLifecycle()
+    val conflictReport by vm.conflictToShow.collectAsStateWithLifecycle()
     val update by vm.update.collectAsStateWithLifecycle()
     val updatePromptShown by vm.updatePromptShown.collectAsStateWithLifecycle()
     val lastCooked by vm.lastCooked.collectAsStateWithLifecycle()
@@ -333,4 +335,8 @@ fun RecipeListScreen(
             onDismiss = { sortDialog = false },
         )
     }
+
+    // 冲突结果弹窗。只在真丢了东西或有解不掉的残留时出现 ——
+    // 「不同字段各改各的」属于正常合并，不该打扰用户。
+    ConflictDialog(report = conflictReport, onDismiss = { vm.dismissConflict() })
 }

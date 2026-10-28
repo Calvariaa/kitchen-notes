@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.sync
 
 import android.content.Context
+import android.util.Log
 import io.github.Calvariaa.kitchennotes.data.Menu
 import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.Recipe
@@ -17,6 +18,7 @@ import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.merge.MergeStrategy
 import org.eclipse.jgit.revwalk.RevWalk
+import org.eclipse.jgit.revwalk.filter.RevFilter
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import java.io.File
 
@@ -126,6 +128,15 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
      */
     suspend fun commitAll(identity: UserIdentity, message: String): String? = withContext(Dispatchers.IO) {
         ensureInitialized(identity)
+        // **有未仲裁的冲突标记时一律不提交。**
+        // 曾经这里不检查：pull 失败后仓库停在 MERGING，回退路径直接 add + commit，
+        // 把带 `<<<<<<<` 的 JSON 提交并推给对端，于是两台设备的记录一起变成
+        // 「解析失败 → 被 runCatching 吞掉 → 从 UI 消失」。
+        // 宁可这一轮不同步，也不能把损坏状态传染出去。
+        if (hasUnresolvedConflicts()) {
+            Log.w(TAG, "skip commit: unresolved conflict markers in work tree")
+            return@withContext null
+        }
         Git.open(repoDir()).use { git ->
             git.add().addFilepattern(".").call()
             // 处理删除（图片被清理、菜谱文件被移除）
@@ -155,87 +166,191 @@ class GitRepo(private val ctx: Context, private val repo: RecipeRepository) {
     }.getOrDefault(Constants.MASTER)
 
     /**
-     * 冲突仲裁：pull 之后工作区可能被写入冲突标记。
-     * 我们不保留标记，而是把两份都解析出来，留 updatedAt 较大的那份，另一份存进 conflict 目录。
+     * 读出一批文件在「共同祖先」里的内容（三方合并的 base 侧）。
      *
-     * 菜谱（dishes/）和菜单（menus/）都走这里。只扫 dishes/ 的话，两边同时改同一餐
-     * （比如各给一道菜打了分）会留下带冲突标记的 JSON，反序列化直接失败，
-     * `MenuRepository.all()` 的 runCatching 把这餐静默吞掉，用户看到的是「菜单凭空消失」。
+     * **为什么必须取 base**：只比较 ours/theirs 两份文本，分不清「一边没动」和
+     * 「两边改成一样」。离线各改不同字段时，没被改的那一侧正好等于 base，
+     * 如果不知道 base，就会把「对方没动这个字段」误判成「对方也改了」，
+     * 于是较晚保存的那份整体胜出、另一边的改动被丢 —— 实测见 MeshRepro7 场景 1。
      *
-     * @return 被仲裁的记录数（菜谱 + 菜单）
+     * **为什么显式传两个 commit 而不是读 `MERGE_HEAD`**：JGit 的 `merge()` 在
+     * 工作区会被覆盖时抛 `CheckoutConflictException`，而**抛异常的那条路径根本不写
+     * `MERGE_HEAD`**。于是 `repo.resolve("MERGE_HEAD")` 恒为 null，base 永远取不到，
+     * 三方合并静默退化成二选一 —— 症状和没改一样，而且完全不报错（实测 MeshRepro8：
+     * 日志里 `base=无`）。调用方手里本来就有 `before`（ours）和 `remoteRev`（theirs），
+     * 直接传进来最可靠。
+     *
+     * @return 相对路径 → 文件内容；读不到的一律不进 map（调用方按「base 未知」保守处理）
      */
-    suspend fun resolveConflictsKeepingNewest(): Int = withContext(Dispatchers.IO) {
-        resolveDir(Paths.dishesDir(ctx), Recipe.serializer()) +
-            resolveDir(File(Paths.repo(ctx), "menus"), Menu.serializer())
+    fun readMergeBaseFiles(
+        git: Git,
+        oursCommit: ObjectId?,
+        theirsCommit: ObjectId?,
+        relativePaths: Collection<String>,
+    ): Map<String, String> {
+        if (relativePaths.isEmpty() || oursCommit == null || theirsCommit == null) return emptyMap()
+        return runCatching {
+            val repo = git.repository
+            val baseTree = repo.newObjectReader().use { reader ->
+                RevWalk(reader).use { walk ->
+                    walk.setRevFilter(RevFilter.MERGE_BASE)
+                    walk.markStart(walk.parseCommit(oursCommit))
+                    walk.markStart(walk.parseCommit(theirsCommit))
+                    walk.next()?.tree ?: return@runCatching emptyMap()
+                }
+            }
+            val out = HashMap<String, String>()
+            relativePaths.forEach { path ->
+                runCatching {
+                    val id = repo.resolve("${baseTree.name()}:$path") ?: return@forEach
+                    out[path] = String(repo.open(id).bytes, Charsets.UTF_8)
+                }
+            }
+            out
+        }.getOrDefault(emptyMap())
     }
 
-    private fun <T> resolveDir(
-        dir: File,
-        serializer: kotlinx.serialization.KSerializer<T>,
-    ): Int {
-        val resolved = mutableListOf<T>()
-        val backupDir = File(Paths.root(ctx), "conflicts").apply { mkdirs() }
-
-        dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.forEach { file ->
-            val text = runCatching { file.readText() }.getOrNull() ?: return@forEach
-            if (!text.contains(CONFLICT_START)) return@forEach
-
-            val ours = sliceSide(text, "ours")
-            val theirs = sliceSide(text, "theirs")
-            val a = ours?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }
-            val b = theirs?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }
-
-            val updatedAtOf: (T) -> Long = { e ->
-                when (e) {
-                    is Recipe -> e.updatedAt
-                    is Menu -> e.updatedAt
-                    else -> 0L
-                }
-            }
-            val idOf: (T) -> String = { e ->
-                when (e) {
-                    is Recipe -> e.id
-                    is Menu -> e.id
-                    else -> file.name.removeSuffix(".json")
-                }
-            }
-
-            val winner = listOfNotNull(a, b).maxByOrNull { updatedAtOf(it) }
-            val loser = if (winner === a) b else a
-
-            if (winner != null) {
-                file.writeText(json.encodeToString(serializer, winner))
-                resolved += winner
-            }
-            if (loser != null) {
-                File(backupDir, "${idOf(loser)}-${updatedAtOf(loser)}.json")
-                    .writeText(json.encodeToString(serializer, loser))
-            }
-            // 记录合并，方便 UI 提示「有 N 条记录发生冲突，已保留较新版」
-            File(backupDir, "merge.log").appendText(
-                "${java.time.Instant.now()} ${file.name} winner=${winner?.let(updatedAtOf)} loser=${loser?.let(updatedAtOf)}\n",
-            )
+    /**
+     * 冲突仲裁：pull/merge 之后工作区可能被写入冲突标记。
+     *
+     * 优先级：**字段级三方合并** > 整文件取 `updatedAt` 较大的那份。
+     *
+     * 前者能保住「一台手机改简介、另一台改小贴士」这种两边都有效的改动；
+     * 后者只在三方合并不可用（base 取不到、JSON 坏了）时兜底，
+     * 且**落败方一定落盘备份**到 `files/store/conflicts/`，用户可以人工找回。
+     *
+     * 菜谱（`dishes/`）和菜单（`menus/`）都走这里。
+     *
+     * @param oursCommit  合并前本机的 HEAD（冲突标记里的 HEAD 侧）
+     * @param theirsCommit 被合进来的对端提交（冲突标记里的另一侧）
+     * @return 结构化清单，UI 拿它渲染「这次撞了哪些、谁被盖了」
+     */
+    suspend fun resolveConflictsKeepingNewest(
+        oursCommit: ObjectId? = null,
+        theirsCommit: ObjectId? = null,
+    ): ConflictReport = withContext(Dispatchers.IO) {
+        Git.open(repoDir()).use { git ->
+            val dishDir = Paths.dishesDir(ctx)
+            val menuDir = File(Paths.repo(ctx), "menus")
+            val dishes = resolveDir(git, dishDir, "dishes", ConflictEntry.Kind.DISH, oursCommit, theirsCommit)
+            val menus = resolveDir(git, menuDir, "menus", ConflictEntry.Kind.MENU, oursCommit, theirsCommit)
+            ConflictReport(entries = dishes.entries + menus.entries, unresolved = dishes.unresolved + menus.unresolved)
         }
-        return resolved.size
     }
 
-    private fun sliceSide(text: String, side: String): String? {
-        val startMark = if (side == "ours") "<<<<<<<" else "======="
-        val endMark = if (side == "ours") "=======" else ">>>>>>>"
-        val start = text.indexOf(startMark)
-        if (start < 0) return null
-        val afterStart = text.indexOf('\n', start).let { if (it < 0) text.length else it + 1 }
-        val end = text.indexOf(endMark, afterStart)
-        if (end < 0) return null
-        return text.substring(afterStart, end)
-            // ours 侧可能内部还嵌着 marker，去掉
-            .replace(Regex("[<=>]{7}.*\\n"), "")
-            .trim()
-            .takeIf { it.startsWith("{") }
+    /** 工作区里还有没有未清除的冲突标记。有就不许提交（见 [commitAll]） */
+    fun hasUnresolvedConflicts(): Boolean {
+        val dirs = listOf(Paths.dishesDir(ctx), File(Paths.repo(ctx), "menus"))
+        return dirs.any { dir ->
+            dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.any { f ->
+                runCatching { ConflictResolver.hasConflict(f.readText()) }.getOrDefault(false)
+            } == true
+        }
+    }
+
+    /** [resolveDir] 的内部结果：解出来的条目 + 解不掉的残留数 */
+    private class DirResolution(val entries: List<ConflictEntry>, val unresolved: Int)
+
+    private fun resolveDir(
+        git: Git,
+        dir: File,
+        label: String,
+        kind: ConflictEntry.Kind,
+        oursCommit: ObjectId?,
+        theirsCommit: ObjectId?,
+    ): DirResolution {
+        val backupDir = File(Paths.root(ctx), "conflicts").apply { mkdirs() }
+        val entries = mutableListOf<ConflictEntry>()
+        var unresolvedCount = 0
+
+        // 先扫一遍找出真有冲突标记的文件，再一次性把它们的 base 版本读出来。
+        // 逐个文件去 walk 提交图会很慢（家用设备上几十个文件就能感到卡顿）。
+        val conflicted = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }
+            ?.mapNotNull { f ->
+                val text = runCatching { f.readText() }.getOrNull() ?: return@mapNotNull null
+                if (ConflictResolver.hasConflict(text)) f to text else null
+            }
+            ?: return DirResolution(emptyList(), 0)
+        if (conflicted.isEmpty()) return DirResolution(emptyList(), 0)
+
+        val repoRoot = Paths.repo(ctx)
+        val relPaths = conflicted.map {
+            it.first.absolutePath.removePrefix(repoRoot.absolutePath).trimStart(File.separatorChar)
+        }
+        val baseTexts = readMergeBaseFiles(git, oursCommit, theirsCommit, relPaths)
+
+        // 打平仲裁用的键：两台设备在同一次合并里看到的是同一对提交，
+        // 只是 ours/theirs 角色互换，所以拿 SHA 定序能保证两边结论一致（见 oursWinsTie）
+        val oursKey = oursCommit?.name()
+        val theirsKey = theirsCommit?.name()
+
+        conflicted.forEachIndexed { index, (file, text) ->
+            val resolution = runCatching { ConflictResolver.arbitrate(text, oursKey, theirsKey) }.getOrNull()
+            if (resolution == null) {
+                // 两边都解不出来（被外部工具写坏、标记不配对）。**保留原文件不提交**，
+                // 让 callers 看到 hasUnresolvedConflicts()=true 而停手，
+                // 数据留在磁盘上还有人工恢复的机会 —— 旧实现这里什么都不做却照样提交。
+                Log.w(TAG, "unresolvable conflict kept as-is: ${file.name}")
+                unresolvedCount++
+                return@forEachIndexed
+            }
+
+            // **优先做字段级三方合并，而不是整文件二选一。**
+            // 一台手机改简介、另一台改小贴士，两份改动落在同一个文件上；
+            // 取 updatedAt 大的那份会把另一个字段的改动整个丢掉（实测 MeshRepro7 场景 1）。
+            val base = baseTexts[relPaths[index]]
+            val three = runCatching {
+                ConflictResolver.mergeThreeWay(
+                    resolution.oursRaw, base, resolution.theirsRaw, oursKey, theirsKey,
+                )
+            }.getOrNull()
+
+            val finalText = three?.text ?: resolution.text
+            val stamp = java.time.LocalDateTime.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+
+            runCatching {
+                file.writeText(finalText)
+
+                // **落败/被覆盖的那一份必须落盘**，哪怕三方合并成功。
+                // 以前这里只往 merge.log 写一行时间戳，用户想找回被覆盖的版本没有任何途径。
+                // 文件名带时间戳，同一份记录多次冲突不会互相覆盖。
+                val backupName = "${file.nameWithoutExtension}-$stamp.json"
+                File(backupDir, backupName).writeText(resolution.loserRaw)
+
+                entries += ConflictEntry(
+                    kind = kind,
+                    id = file.nameWithoutExtension,
+                    fields = three?.conflicts.orEmpty(),
+                    autoMerged = three?.autoMerged.orEmpty(),
+                    backupName = backupName,
+                )
+
+                File(backupDir, "merge.log").appendText(
+                    "$stamp $label/${file.name} " +
+                        if (three == null) {
+                            "fields=unavailable kept updatedAt=${resolution.updatedAt} " +
+                                "side=${if (resolution.oursKept) "ours" else "theirs"}\n"
+                        } else {
+                            "autoMerged=${three.autoMerged} conflicts=${three.conflicts} " +
+                                "resolved=${three.merged}\n"
+                        },
+                )
+                if (three != null && three.conflicts.isNotEmpty()) {
+                    Log.w(
+                        TAG,
+                        "field conflicts in ${file.name}: ${three.conflicts} " +
+                            "(kept newer side; loser backed up to conflicts/)",
+                    )
+                }
+            }.onFailure { Log.w(TAG, "write arbitrated ${file.name} failed", it) }
+        }
+        return DirResolution(entries, unresolvedCount)
     }
 
     companion object {
-        const val CONFLICT_START = "<<<<<<<"
+        const val CONFLICT_START = ConflictResolver.CONFLICT_START
         val STRATEGY: MergeStrategy get() = MergeStrategy.RECURSIVE
+        private const val TAG = "GitRepo"
     }
 }

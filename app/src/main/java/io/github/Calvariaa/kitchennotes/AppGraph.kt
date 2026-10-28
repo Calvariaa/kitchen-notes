@@ -7,6 +7,7 @@ import io.github.Calvariaa.kitchennotes.data.Peer
 import io.github.Calvariaa.kitchennotes.data.RecipeRepository
 import io.github.Calvariaa.kitchennotes.data.SettingsStore
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
+import io.github.Calvariaa.kitchennotes.sync.GitLock
 import io.github.Calvariaa.kitchennotes.sync.GitRepo
 import io.github.Calvariaa.kitchennotes.sync.LanDiscovery
 import io.github.Calvariaa.kitchennotes.sync.MeshCrypto
@@ -21,6 +22,7 @@ import io.github.Calvariaa.kitchennotes.sync.SyncResult
 import io.github.Calvariaa.kitchennotes.update.ApkDownloader
 import io.github.Calvariaa.kitchennotes.update.UpdateChecker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -110,8 +112,10 @@ class AppGraph(private val app: Application) {
     /** 创建家庭后立刻把本地已有菜谱变成可被拉取的提交 */
     suspend fun seedIfEmpty(identity: UserIdentity) = withContext(Dispatchers.IO) {
         runCatching {
-            gitRepo.commitAll(identity, "init: first node")
-            meshRepo.pushWorkspaceToBare()
+            GitLock.mutex.withLock {
+                gitRepo.commitAll(identity, "init: first node")
+                meshRepo.pushWorkspaceToBare()
+            }
         }
     }
 

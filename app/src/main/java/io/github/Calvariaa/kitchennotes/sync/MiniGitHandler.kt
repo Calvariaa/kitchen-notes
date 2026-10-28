@@ -6,6 +6,7 @@ import org.eclipse.jgit.transport.PacketLineOut
 import org.eclipse.jgit.transport.ReceivePack
 import org.eclipse.jgit.transport.RefAdvertiser.PacketLineOutRefAdvertiser
 import org.eclipse.jgit.transport.UploadPack
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 直接实现 git smart HTTP 的三个端点，不做 Servlet 适配。
@@ -40,7 +41,11 @@ internal class MiniGitHandler(
 
     /** 对端 push 后、工作区已合并完成的回调（通知 UI 刷新） */
     @Volatile
-    var onWorkspacePulled: (() -> Unit)? = null
+    /**
+     * 工作区被回灌之后回调。参数是这次回灌产生的冲突清单 ——
+     * 对端 push 触发的仲裁同样可能覆盖掉别人的改动，UI 必须有机会告诉用户。
+     */
+    var onWorkspacePulled: ((ConflictReport) -> Unit)? = null
 
     val prefix: String = "/node.git"
 
@@ -128,14 +133,23 @@ internal class MiniGitHandler(
                     val rp = ReceivePack(repo)
                     rp.setBiDirectionalPipe(false)
                     rp.setPostReceiveHook { _, _ ->
-                        // 对端推完，本机工作区要跟上。后台线程做，别阻塞 HTTP 响应
+                        // 对端推完，本机工作区要跟上。后台线程做，别阻塞 HTTP 响应。
+                        // 必须持 GitLock：此刻 UI 的 commitAndPush / 定时同步很可能
+                        // 正在同一个仓库上 add/commit，不串行化就是 index.lock 抢锁，
+                        // 异常又被 runCatching 吞掉 → 该合并的没合并（坑 38）。
                         Thread {
-                            runCatching {
-                                kotlinx.coroutines.runBlocking {
-                                    meshRepo.pullBareIntoWorkspace()
+                            // 回灌时也可能撞车（对端推来的和自己刚改的是同一条记录）。
+                            // 这条路径以前把仲裁结果整个丢掉，于是「对端 push 触发的那次冲突」
+                            // 对用户完全不可见 —— 明明有人的改动被盖了，界面上什么都不说。
+                            var report = ConflictReport.NONE
+                            kotlinx.coroutines.runBlocking {
+                                GitLock.mutex.withLock {
+                                    report = runCatching {
+                                        meshRepo.pullBareIntoWorkspace(currentIdentity)
+                                    }.getOrDefault(ConflictReport.NONE)
                                 }
                             }
-                            onWorkspacePulled?.invoke()
+                            onWorkspacePulled?.invoke(report)
                         }.also { it.isDaemon = true }.start()
                     }
                     rp.receive(call.body.inputStream(), body, null)

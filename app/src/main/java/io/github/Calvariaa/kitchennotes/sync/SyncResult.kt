@@ -19,6 +19,13 @@ data class SyncResult(
     val groupName: String = "",
     /** 这一轮成功连上了几个对端 */
     val peersReached: Int = 0,
+    /**
+     * 冲突的明细。UI 用它渲染「这次撞了哪些、谁被盖了」的弹窗。
+     *
+     * 为什么要单独带一份结构：`conflictsResolved` 只是个数字，
+     * 说不出「哪道菜的哪个字段被盖了」，用户没法据此去核对或找回。
+     */
+    val conflictReport: ConflictReport = ConflictReport.NONE,
 )
 
 /** 同步过程中的一个可翻译事实 */

@@ -244,6 +244,16 @@
 <!-- ==================== sync results / errors ==================== -->
     <string name="sync_part_pulled">pulled %1$d commits</string>
     <string name="sync_part_conflicts">merged %1$d conflicts (kept the newer)</string>
+    <string name="conflict_title">Merge results</string>
+    <string name="conflict_intro_lost">Both phones changed the same fields. The newer version was kept, the other is saved as a backup.</string>
+    <string name="conflict_intro_merged">Both phones changed different fields. Both changes were kept:</string>
+    <string name="conflict_intro_unresolved">%1$d record(s) could not be merged automatically and were left untouched.</string>
+    <string name="conflict_item_lost">Field %1$s: kept the newer one</string>
+    <string name="conflict_item_merged">Field %1$s: both changes kept</string>
+    <string name="conflict_kind_dish">Recipe</string>
+    <string name="conflict_kind_menu">Menu</string>
+    <string name="conflict_backup_hint">Backups are in files/store/conflicts/ on this device.</string>
+    <string name="conflict_ok">Got it</string>
     <string name="sync_part_pushed">local changes pushed</string>
     <string name="sync_part_up_to_date">already up to date</string>
     <string name="sync_part_adopted_empty">joined “%1$s” (no recipes yet)</string>

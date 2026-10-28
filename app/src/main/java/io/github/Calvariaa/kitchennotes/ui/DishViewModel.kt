@@ -30,7 +30,9 @@ import io.github.Calvariaa.kitchennotes.data.RecipeSort
 import io.github.Calvariaa.kitchennotes.data.Staple
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import io.github.Calvariaa.kitchennotes.data.sharedJson
+import io.github.Calvariaa.kitchennotes.sync.ConflictReport
 import io.github.Calvariaa.kitchennotes.sync.DiscoveredNode
+import io.github.Calvariaa.kitchennotes.sync.GitLock
 import io.github.Calvariaa.kitchennotes.sync.MeshApi
 import io.github.Calvariaa.kitchennotes.sync.MeshCrypto
 import io.github.Calvariaa.kitchennotes.sync.SshKeyFactory
@@ -47,6 +49,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -189,6 +192,18 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
 
     private val _syncMessage = MutableStateFlow<UiText?>(null)
     val syncMessage: StateFlow<UiText?> = _syncMessage.asStateFlow()
+
+    /**
+     * 需要用户过目的冲突清单。非空就弹窗，用户关掉即清空。
+     *
+     * 为什么不做成「同步时就地询问合并/覆盖」：合并发生在后台线程
+     * （`postReceive` 的 daemon 线程、定时同步协程），让它们等用户点按钮
+     * 会把整条同步链堵死；而且全互联 P2P 下「谁先合并」取决于谁先点了同步，
+     * 弹窗会落到随机一台设备上。所以改成**先自动合并、再把结果告诉用户**，
+     * 落败的那份在 `files/store/conflicts/` 里留了实体备份可以找回。
+     */
+    private val _conflictToShow = MutableStateFlow<ConflictReport?>(null)
+    val conflictToShow: StateFlow<ConflictReport?> = _conflictToShow.asStateFlow()
 
     private val _discovered = MutableStateFlow<List<DiscoveredNode>>(emptyList())
     val discovered: StateFlow<List<DiscoveredNode>> = _discovered.asStateFlow()
@@ -906,10 +921,13 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
      */
     private suspend fun startNodeServing(id: UserIdentity, group: MeshGroup) {
         val srv = app.meshServer
-        srv.onPeerChange = {
+        srv.onPeerChange = { report ->
             // 对端推完、工作区已合并 → 立刻刷新 UI，用户不用等下次手动同步
             reload()
             viewModelScope.launch { refreshPeers() }
+            // 回灌时也可能盖掉了本机刚存的东西。这条路径在后台线程，
+            // 不在这里冒泡的话，用户就完全不知道自己的改动被换掉了。
+            if (report.needsAttention) _conflictToShow.value = report
         }
         srv.setGroupName(group.name)
         srv.updateGroup(group)
@@ -1062,6 +1080,9 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
                 if (!silent || notable) {
                     _syncMessage.value = result.parts.toUiText(result)
                 }
+                // 静默同步也要弹冲突：那是「你的改动被盖了」，不是「有数据更新」，
+                // 不能用同一个「别打扰」标准对待。
+                if (result.conflictReport.needsAttention) _conflictToShow.value = result.conflictReport
             } catch (e: SyncError) {
                 // 静默时网络错误不打扰用户（比如这会儿不在同一个 WiFi 下）
                 if (!silent) _syncMessage.value = e.toUiText()
@@ -1077,6 +1098,11 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         _syncMessage.value = null
     }
 
+    /** 用户关掉冲突弹窗。只清展示状态，磁盘上的备份一直留着。 */
+    fun dismissConflict() {
+        _conflictToShow.value = null
+    }
+
     /**
      * 本地改动后：提交 + 推给自己和其他节点。
      *
@@ -1087,12 +1113,19 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     private fun commitAndPush(message: String) {
         viewModelScope.launch {
             val id = _identity.value ?: return@launch
-            withContext(Dispatchers.IO) { runCatching { app.gitRepo.commitAll(id, message) } }
             val g = _group.value
-            // 没加家庭也要镜像到本机裸仓库：之后建组时数据才现成可被拉取
-            withContext(Dispatchers.IO) { runCatching { app.meshRepo.pushWorkspaceToBare() } }
+            // commit / 镜像 / 同步三步必须整体持锁：postReceive 的后台回灌和定时同步
+            // 都在同一个仓库上动 index.lock，不串行化就会有人静默失败（坑 38）
+            withContext(Dispatchers.IO) {
+                GitLock.mutex.withLock {
+                    runCatching { app.gitRepo.commitAll(id, message) }
+                    // 没加家庭也要镜像到本机裸仓库：之后建组时数据才现成可被拉取
+                    runCatching { app.meshRepo.pushWorkspaceToBare() }
+                }
+            }
             if (g == null) return@launch
             if (!_settings.value.pushAfterEdit) return@launch
+            // syncAll 自己会加锁，这里不能再套一层（Mutex 不可重入）
             withContext(Dispatchers.IO) {
                 runCatching { app.sync(silent = true) }
             }

@@ -10,6 +10,7 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.merge.MergeStrategy
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.transport.RefSpec
 import java.io.File
@@ -161,55 +162,60 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
     /**
      * 把裸仓库里的新提交合并回工作区。
      *
-     * 对端 push 进来之后必须调这个，否则主机 UI 看不到家人的改动（数据在，界面不刷新）。
+     * 对端 push 进来之后必须调这个，否则本机 UI 看不到家人的改动（数据在，界面不刷新）。
      *
-     * 非快进时（两边都改了同一道菜）不能 `pull` 一把梭 —— 会留冲突标记，
-     * 而我们的 JSON 一旦带 `<<<<<<<` 就无法反序列化，`runCatching` 静默吞掉，
-     * 表现是「菜谱凭空消失」。所以退化路径走 fetch + merge + 按 updatedAt 仲裁。
+     * **两条铁律**（都是实测撞出来的，见 `_mesh_repro/MeshRepro3.java`）：
+     *
+     * 1. **不许留 `allowEmpty` 提交。** 旧实现在裸仓库前进过就无条件
+     *    `commit().setAllowEmpty(true)`，于是每轮同步两边各长一个「merge: peers (resolved 0)」
+     *    空提交；`MeshSync.syncOne` 又因为 `head != remoteRev` 继续 push，
+     *    两边永远追不上对方 → 图永不收敛。用户看到的就是
+     *    「什么都没改，点同步还是提示拉取 N 个提交」。实测 8 轮空同步各长出 16 个提交。
+     *    现在只有**工作区真的有变化**（`commitAll` 有东西可提交）才落提交。
+     * 2. **合并成功后不要再补一次提交。** JGit 的 merge 带 `setCommit(true)`
+     *    时自己就把结果提交了，再补一个又是一条空提交。
+     *
+     * 冲突时（`mergeStatus` 不是 successful）必须仲裁 + 提交收尾，否则工作区停在
+     * MERGING 状态，之后所有 commit 都抛 "Cannot commit during a merge"。
      */
-    suspend fun pullBareIntoWorkspace(): Int = withContext(Dispatchers.IO) {
-        if (!bareDir().exists()) return@withContext 0
+    suspend fun pullBareIntoWorkspace(identity: UserIdentity): ConflictReport = withContext(Dispatchers.IO) {
+        if (!bareDir().exists()) return@withContext ConflictReport.NONE
         runCatching {
             Git.open(gitRepo.repoDir()).use { git ->
                 val branch = git.repository.branch ?: Constants.MASTER
                 val before = git.repository.resolve(Constants.HEAD)
 
-                val pulled = runCatching {
-                    git.pull()
-                        .setRemote(bareDir().absolutePath)
-                        .setRemoteBranchName(branch)
-                        .call()
-                        .isSuccessful
-                }.getOrDefault(false)
+                // 先 fetch 而不是 pull：pull 在没有配置 remote 时会抛
+                // InvalidConfigurationException（工作区仓库从不配置 remote，
+                // 地址都是每次现传的），那条路径 100% 走不通，白白丢掉一次机会。
+                git.fetch()
+                    .setRemote(bareDir().absolutePath)
+                    .setRefSpecs(RefSpec("+refs/heads/*:refs/remotes/node/*"))
+                    .call()
+                val target = git.repository.resolve("refs/remotes/node/$branch")
+                if (target == null || target == before) return@withContext ConflictReport.NONE
 
-                var resolved = 0
-                if (!pulled) {
-                    git.fetch()
-                        .setRemote(bareDir().absolutePath)
-                        .setRefSpecs(RefSpec("+refs/heads/*:refs/remotes/node/*"))
+                var report = ConflictReport.NONE
+                val merged = runCatching {
+                    git.merge().include(target)
+                        .setStrategy(MergeStrategy.RECURSIVE)
+                        .setMessage("merge: peers")
                         .call()
-                    val target = git.repository.resolve("refs/remotes/node/$branch")
-                    if (target != null && target != before) {
-                        val merge = runCatching {
-                            git.merge().include(target).setMessage("merge: peers").call()
-                        }.getOrNull()
-                        if (merge == null || !merge.mergeStatus.isSuccessful) {
-                            resolved = gitRepo.resolveConflictsKeepingNewest()
-                        }
-                        // 合并成功或仲裁完成都要提交，否则工作区停在 MERGING 状态，
-                        // 后续所有 commit 都会抛 "Cannot commit during a merge"
-                        git.add().addFilepattern(".").call()
-                        git.commit()
-                            .setMessage("merge: peers (resolved $resolved)")
-                            .setAllowEmpty(true)
-                            .call()
-                    }
+                }.getOrNull()
+
+                if (merged == null || !merged.mergeStatus.isSuccessful) {
+                    // 显式传 before / target：JGit 在 CheckoutConflictException 路径上
+                    // 不写 MERGE_HEAD，靠它取 base 必然拿不到（坑 42）
+                    report = gitRepo.resolveConflictsKeepingNewest(before, target)
                 }
-                resolved
+                // 仲裁后（或合并成功但工作区有遗留改动）才提交；没有变化就不提交。
+                // commitAll 自己会判空，而且带「有冲突标记就拒绝提交」的保护。
+                gitRepo.commitAll(identity, "merge: peers (resolved ${report.entries.size})")
+                report
             }
         }.getOrElse {
             Log.w(TAG, "pullBareIntoWorkspace failed", it)
-            0
+            ConflictReport.NONE
         }
     }
 

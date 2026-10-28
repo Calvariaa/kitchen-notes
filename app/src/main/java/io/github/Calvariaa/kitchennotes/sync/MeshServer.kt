@@ -7,6 +7,7 @@ import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.SettingsStore
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -47,7 +48,14 @@ class MeshServer(
 
     /** 对端 push 完成、工作区已合并后回调，让 UI 立刻反映家人改动 */
     @Volatile
-    var onPeerChange: (() -> Unit)? = null
+    /**
+     * 工作区被对端 push 回灌后回调，参数是这次回灌的冲突清单。
+     *
+     * 之所以不只是「通知刷新一下」：回灌过程同样会做字段级仲裁，
+     * **同样可能盖掉本机刚写下的改动**。那条路径发生在后台 daemon 线程里，
+     * 不把清单送到 UI，用户就永远不知道自己的修改被对端的旧值换掉了。
+     */
+    var onPeerChange: ((ConflictReport) -> Unit)? = null
 
     @Volatile
     private var identity: UserIdentity? = null
@@ -109,7 +117,11 @@ class MeshServer(
         // 裸仓库准备和端口监听分开 try：两者失败的原因完全不同，
         // 混在一个 catch 里会把「JGit 建仓库炸了」报成「端口被占用」，
         // 用户照着提示去改端口，永远也修不好。
-        val repoError = runCatching { meshRepo.ensureBare(identity) }.exceptionOrNull()
+        // 持 GitLock 后再动仓库：本方法可能在任意时刻被调用（建组/加入/开机），
+        // 而此刻 postReceive 回灌或定时同步可能正握着仓库（坑 38）。
+        val repoError = runCatching {
+            GitLock.mutex.withLock { meshRepo.ensureBare(identity) }
+        }.exceptionOrNull()
         if (repoError != null) {
             Log.w(TAG, "prepare bare repo failed", repoError)
             lastError = SyncError(
@@ -125,7 +137,7 @@ class MeshServer(
 
             val gitHandler = MiniGitHandler(meshRepo, this@MeshServer)
             gitHandler.currentIdentity = identity
-            gitHandler.onWorkspacePulled = { onPeerChange?.invoke() }
+            gitHandler.onWorkspacePulled = { report -> onPeerChange?.invoke(report) }
 
             http.route("/node.git") { call ->
                 val peer = guard.authorize(call)

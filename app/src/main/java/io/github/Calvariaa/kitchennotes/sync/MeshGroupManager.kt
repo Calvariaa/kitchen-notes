@@ -7,6 +7,7 @@ import io.github.Calvariaa.kitchennotes.data.Peer
 import io.github.Calvariaa.kitchennotes.data.SettingsStore
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,14 +44,17 @@ class MeshGroupManager(
             // 建裸仓库失败就让 create 失败，但必须抛带原因的类型化错误：
             // 让裸异常冒到 ViewModel 的话，那里只能笼统说一句「节点启动失败」，
             // 用户和我们都看不出是 JGit 出了问题还是端口出了问题。
-            runCatching { meshRepo.ensureBare(identity) }
-                .onFailure { throw SyncError(SyncError.Kind.REPO_UNAVAILABLE, describe(it)) }
-            // 先在工作区落一个提交，再镜像过去。顺序反了的话工作区可能还是
-            // unborn HEAD，push 会因为「源 ref 解析不到对象」直接失败，
-            // 于是裸仓库永远停在空提交上 —— 家人加入后拉到的是空仓库。
-            runCatching { gitRepo.commitAll(identity, "init: first node") }
-            runCatching { meshRepo.pushWorkspaceToBare() }
-                .onFailure { throw SyncError(SyncError.Kind.REPO_UNAVAILABLE, describe(it)) }
+            // 持 GitLock：建仓库 / 提交 / 镜像三步之间不能和别的同步交错（坑 38）
+            GitLock.mutex.withLock {
+                runCatching { meshRepo.ensureBare(identity) }
+                    .onFailure { throw SyncError(SyncError.Kind.REPO_UNAVAILABLE, describe(it)) }
+                // 先在工作区落一个提交，再镜像过去。顺序反了的话工作区可能还是
+                // unborn HEAD，push 会因为「源 ref 解析不到对象」直接失败，
+                // 于是裸仓库永远停在空提交上 —— 家人加入后拉到的是空仓库。
+                runCatching { gitRepo.commitAll(identity, "init: first node") }
+                runCatching { meshRepo.pushWorkspaceToBare() }
+                    .onFailure { throw SyncError(SyncError.Kind.REPO_UNAVAILABLE, describe(it)) }
+            }
             group
         }
 
@@ -77,11 +81,14 @@ class MeshGroupManager(
         // 启动服务端：加入之后本机也是完整节点，别人也能连我
         server.start(identity, outcome.group)
         server.updateGroup(outcome.group)
-        meshRepo.ensureBare(identity)
-        // 先把自己已有的菜谱落成提交并镜像出去，对端才能拉到「我这边有什么」，
-        // 否则加入后的第一轮同步只能单向拿到对方的，我的菜谱要等下次编辑才出现
-        runCatching { gitRepo.commitAll(identity, "init: joined mesh") }
-        meshRepo.pushWorkspaceToBare()
+        // 持 GitLock：紧跟着的 syncAll 也会要这把锁，这里先做完提交+镜像
+        GitLock.mutex.withLock {
+            meshRepo.ensureBare(identity)
+            // 先把自己已有的菜谱落成提交并镜像出去，对端才能拉到「我这边有什么」，
+            // 否则加入后的第一轮同步只能单向拿到对方的，我的菜谱要等下次编辑才出现
+            runCatching { gitRepo.commitAll(identity, "init: joined mesh") }
+            meshRepo.pushWorkspaceToBare()
+        }
 
         // 立刻同步一轮：把对端数据拉下来，也让对端知道我在
         val result = runCatching {

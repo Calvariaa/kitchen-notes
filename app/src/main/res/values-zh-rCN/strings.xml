@@ -227,6 +227,16 @@
     <!-- ==================== 同步结果 / 错误 ==================== -->
     <string name="sync_part_pulled">拉取 %1$d 个提交</string>
     <string name="sync_part_conflicts">合并 %1$d 条冲突（保留较新）</string>
+    <string name="conflict_title">合并结果</string>
+    <string name="conflict_intro_lost">两台设备改了同样的字段，已保留较新的那份，另一份存为备份。</string>
+    <string name="conflict_intro_merged">两台设备改的是不同字段，两边的改动都保住了：</string>
+    <string name="conflict_intro_unresolved">有 %1$d 条记录没能自动合并，已原样保留未动。</string>
+    <string name="conflict_item_lost">字段「%1$s」保留了较新的那份</string>
+    <string name="conflict_item_merged">字段「%1$s」两边的改动都保住了</string>
+    <string name="conflict_kind_dish">菜谱</string>
+    <string name="conflict_kind_menu">菜单</string>
+    <string name="conflict_backup_hint">备份就在本机 files/store/conflicts/ 目录里。</string>
+    <string name="conflict_ok">知道了</string>
     <string name="sync_part_pushed">已推送本地改动</string>
     <string name="sync_part_up_to_date">已是最新</string>
     <string name="sync_part_adopted_empty">已加入「%1$s」（还没有菜谱）</string>

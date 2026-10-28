@@ -61,6 +61,8 @@ app/src/main/java/io/github/Calvariaa/kitchennotes/
 │   └── ImageIngestor.kt    压缩 + EXIF 方向校正
 ├── sync/
 │   ├── GitRepo.kt          工作区仓库初始化、commitAll、冲突仲裁
+│   ├── GitLock.kt          全局 git 互斥锁（动仓库必须先拿，坑 38）
+│   ├── ConflictResolver.kt 行内冲突标记解析 + updatedAt 仲裁（坑 40）
 │   ├── MeshServer.kt       本机节点服务：/node.git + /mesh/*（人人都是服务端）
 │   ├── MiniGitHandler.kt   HttpCall → JGit UploadPack/ReceivePack
 │   ├── MiniHttpServer.kt   ServerSocket + 手写 HTTP/1.1（含 gzip 请求体）
@@ -151,27 +153,18 @@ filesDir/store/
   `MeshServer.onWorkspacePulled` 回调 → `reload()`。家人改完的瞬间就能看到，
   不用等下次手动同步。这个回调对**每个**节点都要接（包括当初「创建家庭」的那台）。
 - **冲突仲裁覆盖两边**：`resolveConflictsKeepingNewest()` 同时扫 `dishes/` 和
-  `menus/`（泛化成 `resolveDir(dir, serializer)`）。只扫 dishes 的话，
+  `menus/`（都在 `resolveDir(dir, label)` 里）。只扫 dishes 的话，
   两边同时改同一餐会让菜单 JSON 带冲突标记，反序列化失败被 `runCatching` 吞掉，
-  表现为「菜单凭空消失」。
-- 启动：`boot()` 里只要有家庭组就把节点服务拉起来再同步一轮（顺序不能反：
-  服务不起对端推不进来，不先同步上次的数据要等第一次轮询）。
-- 菜谱（`dishes/`）和菜单（`menus/`）在同一个 git 工作区里，一次 `commitAll` 同时提交两边。
-  但**每个改动点都必须显式调 `commitAndPush`**——新建/编辑/删除已有，菜单侧
-  `createMenu` / `toggleMenuRecipe` / `setMenuSlot` / `setMenuDate` /
-  `toggleMenuStaple` / `setMenuNote` 也都接了；漏掉任何一个，那类改动就只落在
-  本地磁盘、不会进 git，直到下一次全量 `commitAll`（定时同步）才补上。
-- **定时同步**：`ViewModel.restartAutoSync()` 按 `autoSyncMinutes` 起轮询协程，
-  都走 `runSync(silent=true)`；静默时只在拉到新数据或发生仲裁才弹提示，
-  网络错误完全静默。`updateSettings` 改同步相关设置时会重建这个协程。
-  没加家庭组时协程不起，省电。
-- **UI 自动刷新**：对端 push → `postReceive` 后台 `pullBareIntoWorkspace` →
-  `MeshServer.onWorkspacePulled` 回调 → `reload()`。家人改完的瞬间就能看到，
-  不用等下次手动同步。这个回调对**每个**节点都要接（包括当初「创建家庭」的那台）。
-- **冲突仲裁覆盖两边**：`resolveConflictsKeepingNewest()` 同时扫 `dishes/` 和
-  `menus/`（泛化成 `resolveDir(dir, serializer)`）。只扫 dishes 的话，
-  两边同时改同一餐会让菜单 JSON 带冲突标记，反序列化失败被 `runCatching` 吞掉，
-  表现为「菜单凭空消失」。
+  表现为「菜单凭空消失」。真正的合并是 `sync/ConflictResolver.kt` 的
+  **字段级三方合并**（按行切段 + 逐字段比 ours/base/theirs），见坑 40/42。
+  被覆盖的版本一律备份到 `files/store/conflicts/<id>-<时间戳>.json`。
+- **所有动仓库的地方都持 `GitLock.mutex`**（`sync/GitLock.kt`）：`syncAll` 整轮、
+  `commitAndPush` 的提交+镜像、`postReceive` 后台回灌、`ensureBare`、建组/加入/`seedIfEmpty`。
+  并发就是抢 `index.lock`，异常会被 `runCatching` 吞掉 → 静默丢数据（坑 38）。
+  `Mutex` 不可重入，`syncAll` 已持锁时别再套一层。
+- **回灌不造空提交**：`pullBareIntoWorkspace` 复用 `commitAll`（它自己判空），
+  `syncOne` 的 `pulled` 是「合并前对方领先我几个提交」。否则两个节点互相追着造空提交，
+  永不收敛，UI 永远报「拉取 N 个提交」（坑 39）。
 - 启动：`boot()` 里只要有家庭组就把节点服务拉起来再同步一轮（顺序不能反：
   服务不起对端推不进来，不先同步上次的数据要等第一次轮询）。
 
@@ -440,6 +433,149 @@ filesDir/store/
     （`EADDRINUSE` / `EACCES`），其它情况退回 `t.javaClass.simpleName`。
     同一个函数也别再用 `"端口|原因"` 拼字符串再 `split("|")`：原因文本来自系统，
     含不含 `|` 不由我们决定。`SyncError` 因此多了独立的 `hint` 字段。
+
+38. **同一个工作区不能并发动 git —— JGit 抢 `index.lock` 抛的异常会被 `runCatching` 吞掉。**
+    改一个菜谱会同时惊动四条路径：UI 的 `commitAndPush`（`add`+`commit`）、
+    `MeshSync.syncAll`（`add`/`merge`/`push`/镜像）、`postReceive` **后台 daemon 线程**
+    里的 `pullBareIntoWorkspace`、以及定时同步协程。它们原先完全没有串行化。
+    撞上时的异常是 `JGitInternalException: Exception caught during execution of add command`，
+    而每个调用点外面都包着 `runCatching`（为了不让异常逃进 `viewModelScope` 把进程带崩，坑 15），
+    于是**失败静默**：该提交的没提交、该镜像的没镜像、该合并的没合并。
+    实测（工程外 `_mesh_repro/MeshRepro4.java`）：30 个菜单文件 + 三路并发 commit 外加一路 push，
+    **裸仓库里最终一个文件都没有**，于是对端永远拉不到 —— 用户看到「同步了，然后没了」。
+    现在统一走 `sync/GitLock.kt` 的 `GitLock.mutex`（全局一把，`Mutex` 不可重入）：
+    `syncAll` 整轮持锁、`commitAndPush` 的 commit+镜像持锁、`postReceive` 线程持锁、
+    `ensureBare` / 建组 / 加入 / `seedIfEmpty` 都持锁。
+    **加新调用点时必须自己进锁**，并注意 `syncAll` 已经持锁时不要再套一层。
+
+39. **`commit().setAllowEmpty(true)` 会让两个节点永远追不上彼此。**
+    `pullBareIntoWorkspace` 旧逻辑是「裸仓库前进过就无条件 `commit(allowEmpty=true)`」，
+    `syncOne` 又是「`head != remoteRev` 就 push」。于是每次同步两边各造一个空合并提交，
+    对方看到新提交也跟着造一个 —— **永不收敛**。
+    实测（`MeshRepro3.java`）：8 轮什么都不改的同步，A 从 1 涨到 19 个提交、B 从 0 涨到 18 个；
+    这就是「没改也显示『拉取 N 个提交，已推送本地改动』」的成因。
+    修法两条：① 回灌只用 `commitAll`（它自己判空），有变化才落提交；
+    ② `syncOne` 的 `pulled` 改成「合并前对方领先我多少个提交」，不再是合并后的差值。
+    另外 JGit 的 `merge().setCommit(true)` 自己就提交了结果，**别在成功路径上再补一次提交**。
+
+40. **冲突标记是行内的，不是包住整个文件 —— 按「整对象」切片必然失败。**
+    git 给出的真实形态：
+    ```
+    {
+      "id": "seed",
+    <<<<<<< HEAD
+      "note": "B 改的",
+      "updatedAt": 6000,
+    =======
+      "note": "A 改的",
+      "updatedAt": 5000,
+    >>>>>>> 99b0241
+      "deleted": false
+    }
+    ```
+    大括号在标记**外面**。旧 `sliceSide()` 取完两侧要求 `startsWith("{")`，
+    于是两边都判「解析失败」，`winner = null`，**谁都不写回** ——
+    文件永久停在冲突态；随后被 `commitAll` 提交、推给对端，
+    两台设备的 `all()` 都在 `runCatching` 里吞掉它 → **同时消失**。
+    现在由 `sync/ConflictResolver.kt` 按行切段（公共内容 / 冲突块 / 公共内容 / …），
+    两侧各自拼成完整 JSON 再比 `updatedAt`。
+    还有两个必须一起处理的细节：
+    - **尾随逗号**：冲突块常落在最后一个字段，拼出来是 `{"a":1,"updatedAt":100,}`，
+      严格 JSON 解析失败。`updatedAtOf()` 和写回文本都要 `,(\s*[}\]])` → `$1` 清洗。
+    - **多冲突块**：块与块之间还有公共行，早期版本把第一个块之后的全部剩余行当尾部，
+      第二处冲突被吞进尾部，两侧文本都残留 `<<<<<<<`。必须按顺序保留成段序列。
+    仲裁不出来（标记不配对等）时**返回 null 并保留原文件**，配合 `commitAll` 的
+    `hasUnresolvedConflicts()` 拦截，宁可这一轮不同步也不把损坏状态传染出去。
+
+41. **`all()` 里 `runCatching` 静默丢弃坏文件，会让「消失」变成无从查证的幽灵问题。**
+    `RecipeRepository.all()` / `MenuRepository.all()` 对每个文件 `runCatching { ... }.getOrNull()`，
+    坏文件直接跳过。这个设计本身没错（一条坏记录不该让整页空白），
+    但它导致症状完全无痕：**磁盘上文件还在、界面上没有、日志里也没有线索**。
+    现在两处都补了 `onFailure { Log.w(TAG, "skip unreadable ... file: ${f.name}", it) }`。
+    **排查「菜谱/菜单凭空消失」的标准动作**：
+    `adb shell run-as io.github.Calvariaa.kitchennotes ls files/store/repo/dishes` 看文件在不在 →
+    在就 `cat` 一个看是不是带 `<<<<<<<` 或截断 → 再查 logcat 里 TAG `RecipeRepository` / `MenuRepository`。
+
+42. **冲突必须按「字段」三方合并，整文件取 `updatedAt` 较大的那份是 winner-takes-all。**
+    两台手机离线各改一点是最常见的用法：A 改了简介、B 改了小贴士，两份改动落在同一个
+    `r1.json` 上。旧逻辑只留 `updatedAt` 大的那份，**另一边的改动整个丢掉**；
+    而且落败内容只往 `merge.log` 写一行时间戳，用户没有任何恢复途径。
+    实测（工程外 `_mesh_repro/MeshRepro7.java` 场景 1）：`A.tips = <缺字段>`。
+    现在 `ConflictResolver.mergeThreeWay(ours, base, theirs)` 逐字段判定，并落盘备份
+    被覆盖的版本到 `files/store/conflicts/<id>-<时间戳>.json`。
+
+    **`base` 不能省。** 只比 ours/theirs 两份文本分不清「一边没动」和「两边改成一样」：
+    `theirs == base` 才说明「对方没碰这个字段，直接用我的」。没有 base 就会把
+    「对方没动」误判成「对方也改了」，照样丢数据。
+
+    **取 base 必须显式传两个 commit，不能读 `MERGE_HEAD`。**
+    JGit 的 `merge()` 在工作区会被覆盖时抛 `CheckoutConflictException`，
+    而**抛异常那条路径根本不写 `MERGE_HEAD`**。于是 `repo.resolve("MERGE_HEAD")` 恒为 null，
+    base 永远取不到，三方合并静默退化成二选一 —— 症状和没改一样且完全不报错。
+    调用方手里本来就有 `before`/`target`，直接传进
+    `resolveConflictsKeepingNewest(oursCommit, theirsCommit)`。
+
+    **注意 git 自己已经能合并掉大部分情况**：菜谱 JSON 是多行格式，两个字段在不同行时
+    git 的行级合并就干净解决了，根本不会产生冲突标记（所以「各改不同字段」在真实数据上
+    往往连冲突都碰不到）。三方合并真正兜住的是**同一行内多字段**（单行 JSON）和
+    **同一字段**两种情况。回归验证要用单行 JSON 才触发得到，见 `MeshRepro8` 场景 1b。
+
+43. **Windows 上跑复现要把 `core.autocrlf` 关掉，否则会看到假冲突。**
+    默认 autocrlf 把检出改成 CRLF，于是「内容相同」的两份文本字节不同，
+    git 判冲突、而三方合并又发现语义相同 —— 制造出 Android 上根本不存在的伪冲突，
+    把真实行为掩盖掉。Android 没有这个转换，测试里写
+    `core.autocrlf=false` + `core.eol=lf` 才等价。
+
+44. **冲突不要在同步过程中弹窗询问，要「先自动合并、再告知结果」。**
+    直觉上「谁先合并谁确认」很像 git，但在全互联 P2P 上走不通，三个硬理由：
+    - **弹窗落在随机一台设备上**：没有主机，同步是两两跑的，「先执行合并的那台」
+      就是「先点了同步的那台」。同一份冲突，A 先点就问 A、B 先点就问 B。
+      三台设备时同一份数据可能被问两遍。
+    - **合并跑在后台线程**：`postReceive` 的 daemon 线程和定时同步协程
+      （`autoSyncMinutes` 默认 5 分钟）。让它们停下来等用户点按钮，
+      会把整条同步链堵死；锁屏/充电时更是永远等不到。
+    - **用户看不懂选什么**：绝大多数冲突是「一边改简介、一边改小贴士」，
+      这种根本不该问（字段级三方合并已经两边都保住了）。真需要问的只有
+      **同一字段被两边改**，而那时用户得先知道谁覆盖谁、丢的是哪份。
+
+    所以现在的行为分两层，实现在 `sync/ConflictReport.kt` + `ui/components/ConflictDialog.kt`：
+    - `ConflictReport.needsAttention` 为 false（只发生不同字段的自动合并）→ **完全静默**；
+    - 为 true（同字段撞车，或有解不掉的残留）→ 同步结束后弹 `ConflictDialog`，
+      列出「哪道菜的哪个字段保留了较新的那份」，并提示备份在 `files/store/conflicts/`。
+    两条产生冲突的路径**都要上报**：`MeshSync.syncOne` 和 `MiniGitHandler` 的
+    `postReceive` 回灌。后者以前把仲裁结果整个丢掉，于是「对端 push 触发的那次冲突」
+    对用户完全不可见。`onPeerChange` / `onWorkspacePulled` 因此带 `ConflictReport` 参数。
+    多对端的一轮同步要**按 `kind/id` 聚合去重**，只留最后一份会让用户漏看前几次。
+    字段名在弹窗里**保持英文原样**（`summary` / `tips`）——它就是 JSON 里的真实键名，
+    翻译后和用户打开文件看到的内容对不上。
+
+45. **`updatedAt` 打平时必须走确定性裁决，否则两台设备永远不收敛。**
+    旧写法在两处都**固定偏向一侧**：
+    ```kotlin
+    arbitrate:     oursAt >= theirsAt -> oursRaw      // 打平偏向 ours
+    mergeThreeWay: (theirsAt) >= (oursAt)             // 打平偏向 theirs
+    ```
+    「偏向 ours」听起来无害，但**ours 在两台设备上指的不是同一份数据**：
+    ```
+    A 设备：ours = A 的版本, theirs = B 的版本 → 保留 A 的
+    B 设备：ours = B 的版本, theirs = A 的版本 → 保留 B 的
+    ```
+    各持一份不同结果 → 互相 push → 又判冲突 → 又选错一次，**来回推不收敛**。
+    现在 `ConflictResolver.oursWinsTie()` 定序，`arbitrate` / `mergeThreeWay` 打平时都调它。
+
+    **裁决键用提交 SHA，不是 nodeId。** 仲裁发生在两台设备的**同一次合并**里，
+    双方看到的是同样两个提交、只是 ours/theirs 角色互换，所以 `ObjectId.name()`
+    天然满足「两台设备看到同一个值」。nodeId 做不到 —— 记录里根本没存「谁改的」
+    （`author` 是用户填的显示名，可能空、可能重名），要为它加全链路传参不值得。
+    调用方 `resolveDir` 把 `oursCommit?.name()` / `theirsCommit?.name()` 传进去。
+    拿不到提交时（空仓库、手工调用）退化为比正文，两个候选文本在两边是同一对，同样可复现。
+
+    **tie-break 保证的是收敛，不是正确。** 真并发时两份改动因果平权，
+    没有「更对」的一方，只需要「两台算出同一个答案」。选错的代价由 `conflicts/` 备份兜底。
+    时间戳仍然优先于 SHA —— SHA 只在**毫秒完全相同**时才生效。
+
+    验证：`_mesh_repro/TieBreakCheck.java` 11/11。核心断言是**交换 ours/theirs 后
+    算出的赢家相同**，这一条直接对应「会收敛」。别只测单侧 —— 单侧怎么测都过。
 
 ## 权限
 

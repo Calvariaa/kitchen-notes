@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.data
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -26,12 +27,21 @@ class MenuRepository(private val ctx: Context) {
 
     private fun dir(): File = File(Paths.repo(ctx), "menus").apply { mkdirs() }
 
+    private companion object {
+        const val TAG = "MenuRepository"
+    }
+
     // ---------------------------------------------------------------- 读
 
     suspend fun all(): List<Menu> = withContext(Dispatchers.IO) {
         dir().listFiles { f -> f.isFile && f.name.endsWith(".json") }
             ?.mapNotNull { f ->
-                runCatching { json.decodeFromString<Menu>(f.readText()) }.getOrNull()
+                runCatching { json.decodeFromString<Menu>(f.readText()) }
+                    // 坏一个文件不该让整页菜单空白，**但不能静默**：
+                    // 「菜单凭空消失」这种问题，磁盘上明明有文件、界面没有、
+                    // 日志也没有线索，是排查起来最费劲的一类（坑 41）。
+                    .onFailure { Log.w(TAG, "skip unreadable menu file: ${f.name}", it) }
+                    .getOrNull()
             }
             ?.filter { !it.deleted }
             // 日期倒序（最近的饭在前），同日按餐次倒序：晚餐 > 午餐 > 早餐
