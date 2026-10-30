@@ -52,6 +52,8 @@ class MeshGroupManager(
                 // unborn HEAD，push 会因为「源 ref 解析不到对象」直接失败，
                 // 于是裸仓库永远停在空提交上 —— 家人加入后拉到的是空仓库。
                 runCatching { gitRepo.commitAll(identity, "init: first node") }
+                // 镜像前可能先回灌一次，那次合并要用这个身份署名
+                meshRepo.identitySnapshot = identity
                 runCatching { meshRepo.pushWorkspaceToBare() }
                     .onFailure { throw SyncError(SyncError.Kind.REPO_UNAVAILABLE, describe(it)) }
             }
@@ -87,6 +89,8 @@ class MeshGroupManager(
             // 先把自己已有的菜谱落成提交并镜像出去，对端才能拉到「我这边有什么」，
             // 否则加入后的第一轮同步只能单向拿到对方的，我的菜谱要等下次编辑才出现
             runCatching { gitRepo.commitAll(identity, "init: joined mesh") }
+            // 镜像前可能先回灌一次，那次合并要用这个身份署名
+            meshRepo.identitySnapshot = identity
             meshRepo.pushWorkspaceToBare()
         }
 

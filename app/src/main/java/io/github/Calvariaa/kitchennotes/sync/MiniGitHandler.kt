@@ -38,6 +38,12 @@ internal class MiniGitHandler(
     @Volatile
     var currentIdentity: UserIdentity =
         UserIdentity(name = "dish", email = "dish@localhost")
+        set(value) {
+            field = value
+            // pushWorkspaceToBare 现在可能在镜像前触发一次回灌（合并裸仓库里
+            // 工作区还没见过的提交），那次合并需要一个署名身份
+            meshRepo.identitySnapshot = value
+        }
 
     /** 对端 push 后、工作区已合并完成的回调（通知 UI 刷新） */
     @Volatile

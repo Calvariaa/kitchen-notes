@@ -577,6 +577,42 @@ filesDir/store/
     验证：`_mesh_repro/TieBreakCheck.java` 11/11。核心断言是**交换 ours/theirs 后
     算出的赢家相同**，这一条直接对应「会收敛」。别只测单侧 —— 单侧怎么测都过。
 
+46. **`pushWorkspaceToBare` 是强制推送，而 `node.git` 对端也会写 —— 不先回灌就镜像等于亲手抹掉刚到达的数据。**
+    `node.git` 同时承担两个角色：对外是「我这条链的只读镜像」，对内是**接收对端 push 的收件箱**。
+    对端推进来的提交先落在这里，再由 `postReceive` 的 daemon 线程回灌到工作区 —— 那个回灌是**异步**的。
+    于是存在一个窗口：**数据已经在 `node.git` 里，但工作区还不知道**。
+    此时若执行镜像（`RefSpec("+refs/heads/$branch:...")`，带 `+` 是强制的），
+    就是拿「还没有这份数据的工作区」覆盖「已经有这份数据的裸仓库」→ 数据凭空蒸发。
+
+    实测（`_mesh_repro/MeshRepro10.java` 场景 10b）：A 建菜 → A 同步（菜进了 B 的 `node.git`）
+    → B 的后台回灌尚未执行 → B 点同步 → **`node.git` 里那道菜消失**。
+    用户看到的就是「A 刚建的菜在 A 上也跟着没了」。
+
+    修法两条，都在 `MeshRepo.pushWorkspaceToBare`：
+    - **镜像前先判断裸仓库 HEAD 是不是工作区 HEAD 的祖先**，不是就先 `pullBareIntoWorkspace`。
+      用祖先关系而不是 `==`：相等只说明外观一致，祖先关系才表达「它多出来的我都已经有了」。
+    - **回灌之后必须复核**。`pullBareIntoWorkspace` 把所有异常都 `runCatching` 掉了
+      （它不能让一次合并失败掀翻整条同步链），所以「它返回了」≠「合并成功了」。
+      若此刻仍不构成祖先关系，**放弃这一轮镜像**并记 warning —— 数据留在 `node.git` 里，
+      下一轮或下一次回灌还能救回来；覆盖了就永久没了。
+
+    强制推送本身仍然必需：`ensureBare` 垫的空提交和工作区真正的根提交没有共同祖先，
+    不带 `+` 会被判 non-fast-forward 直接拒绝，镜像会永远停在空树上。
+
+    `identitySnapshot` 因此引入：镜像前触发的回灌需要一次合并提交署名，
+    而 `pushWorkspaceToBare()` 原本没有 identity 参数。三个调用点
+    （`MeshSync.syncAll`、`DishViewModel.commitAndPush`、`MiniGitHandler.currentIdentity`
+    的 setter）都在动仓库**之前**把它写进去。
+
+    验证：`MeshRepro10` 21/21。关键对照是 10b（旧逻辑，数据被抹）vs 10d（新逻辑，数据保住
+    且工作区同时拿到），以及 10g 直接验证护栏判定：回灌无效时判为「不许覆盖」，
+    回灌成功后立刻放行 —— 两条都要测，只测一侧会得到「永远不敢镜像」或「照样覆盖」。
+
+    **顺带一条测试纪律**：Windows 上 git 的 objects/pack 是只读的，`f.delete()` 静默失败，
+    上一轮的 `.git` 残留会让下一轮 `ensureInitialized` 跳过创建、随后 `Git.open` 抛
+    `repository not found` —— 看起来像逻辑 bug，其实只是测试目录没删干净。
+    删除必须 `setWritable(true)` 后再删（`MeshRepro10.del()` 是正确写法）。
+
 ## 权限
 
 `INTERNET`、`ACCESS_NETWORK_STATE`、`ACCESS_WIFI_STATE`、`REQUEST_INSTALL_PACKAGES`（应用内更新）。

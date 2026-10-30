@@ -8,9 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.merge.MergeStrategy
+import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.transport.RefSpec
 import java.io.File
@@ -139,12 +141,53 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
      * 而 JGit 在构造 RemoteRefUpdate 时要解析 `refs/heads/master` 指向的对象，
      * 解析不到就抛 `IOException: Source ref refs/heads/master doesn't resolve to any
      * object`，整个 push 挂掉。裸仓库那边只剩 ensureBare 垫的空提交，对端拉到的是空树。
+     *
+     * **镜像前必须先把裸仓库里「工作区还不知道」的提交合并回来。**
+     * 这里用的是强制推送（`+refs/heads/...`，理由见下），而裸仓库是**对端也会写入**的地方：
+     * 对端 push 进来的提交先进裸仓库，再由 postReceive 的后台线程回灌到工作区。
+     * 那个回灌是异步的 —— 在线程跑完之前，工作区里没有这批数据，而裸仓库里有。
+     * 此时若直接强制推送，就等于用「还没有这份数据的工作区」把「已经有这份数据的裸仓库」
+     * 覆盖掉，**对端刚送到、还没落地的新数据被自己抹掉**。
+     *
+     * 实测（工程外 `_mesh_repro/MeshRepro10.java` 场景 10b）：A 建菜 → A 同步（菜进了
+     * B 的 node.git）→ B 的后台回灌尚未执行 → B 点同步 → node.git 里那道菜消失。
+     * 用户看到的就是「A 刚建的菜在 A 上也没了」。
+     * 场景 10d 验证修复：镜像前若发现裸仓库有工作区还没见过的提交，先回灌再推，
+     * 数据保住且工作区同时拿到。
      */
     suspend fun pushWorkspaceToBare() = withContext(Dispatchers.IO) {
         runCatching {
             Git.open(gitRepo.repoDir()).use { git ->
                 val branch = git.repository.branch ?: Constants.MASTER
-                val head = git.repository.resolve("refs/heads/$branch") ?: return@use
+                var head = git.repository.resolve("refs/heads/$branch") ?: return@use
+
+                // 裸仓库里有工作区尚未合并的提交 → 先把它们并进来，再覆盖。
+                // 判断用「裸仓库 HEAD 是不是工作区 HEAD 的祖先」而不是「两者是否相等」：
+                // 相等只说明外观一致，祖先关系才能表达「它多出来的我都已经有了」。
+                val bareHead = runCatching { openBare().use {
+                    it.resolve("refs/heads/${bareBranchOf(it)}")
+                } }.getOrNull()
+                if (bareHead != null && !isAncestor(git, bareHead, head)) {
+                    Log.i(TAG, "node.git has commits not in workspace, pulling first")
+                    pullBareIntoWorkspace(identitySnapshot)
+                    head = git.repository.resolve("refs/heads/$branch") ?: return@use
+
+                    // **回灌之后必须复核一次。** pullBareIntoWorkspace 内部把异常都
+                    // runCatching 掉了（它不能让一次合并失败把整个同步链掀翻），
+                    // 所以「它返回了」不等于「合并成功了」。若此刻裸仓库里的提交
+                    // 仍不是工作区的祖先，说明那批数据还没进工作区 —— 这时候强推
+                    // 就是把它们抹掉，宁可这一轮不镜像：对端数据留在 node.git 里，
+                    // 下一轮或下一次回灌还能救回来。
+                    if (!isAncestor(git, bareHead, head)) {
+                        Log.w(
+                            TAG,
+                            "skip mirror: node.git still ahead of workspace after pull; " +
+                                "refusing to overwrite it (would drop peer data)",
+                        )
+                        return@use
+                    }
+                }
+
                 git.push()
                     .setRemote(bareDir().absolutePath)
                     // 强制更新：裸仓库是本机镜像，不是独立历史。ensureBare 垫的那个
@@ -156,6 +199,32 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
             }
         }.onFailure { Log.w(TAG, "pushWorkspaceToBare failed", it) }
     }
+
+    /**
+     * 回灌时用的身份。`pushWorkspaceToBare` 原本没有 identity 参数，
+     * 但它现在可能触发一次合并提交，必须有人署名。
+     * 由 [MeshServer] 启动时写入，或第一次带身份的调用补齐。
+     */
+    @Volatile
+    var identitySnapshot: UserIdentity = UserIdentity(name = "dish", email = "dish@localhost")
+
+    private fun bareBranchOf(repo: Repository): String =
+        runCatching { repo.branch }.getOrNull() ?: Constants.MASTER
+
+    /** ancestor 是否是 descendant 的祖先（含相等） */
+    private fun isAncestor(git: Git, ancestor: ObjectId, descendant: ObjectId): Boolean =
+        runCatching {
+            if (ancestor == descendant) return true
+            RevWalk(git.repository).use { walk ->
+                val a = walk.parseCommit(ancestor)
+                walk.markStart(walk.parseCommit(descendant))
+                var found = false
+                for (c in walk) {
+                    if (c == a) { found = true; break }
+                }
+                found
+            }
+        }.getOrDefault(false)
 
     // ------------------------------------------------------------ 裸仓库 → 工作区
 

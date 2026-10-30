@@ -111,6 +111,8 @@ class MeshServer(
     suspend fun start(identity: UserIdentity, group: MeshGroup) = withContext(Dispatchers.IO) {
         this@MeshServer.identity = identity
         this@MeshServer.group = group
+        // 镜像前先回灌时会用它署名合并提交（见 MeshRepo.pushWorkspaceToBare）
+        meshRepo.identitySnapshot = identity
         if (running) return@withContext
 
         val port = settings.get().serverPort

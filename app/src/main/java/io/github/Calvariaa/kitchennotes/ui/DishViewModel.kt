@@ -1119,7 +1119,10 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
             withContext(Dispatchers.IO) {
                 GitLock.mutex.withLock {
                     runCatching { app.gitRepo.commitAll(id, message) }
-                    // 没加家庭也要镜像到本机裸仓库：之后建组时数据才现成可被拉取
+                    // 没加家庭也要镜像到本机裸仓库：之后建组时数据才现成可被拉取。
+                    // 镜像前可能先触发一次回灌（裸仓库里有工作区还没见过的提交时），
+                    // 那次合并要署名，所以这里先把它带上。
+                    app.meshRepo.identitySnapshot = id
                     runCatching { app.meshRepo.pushWorkspaceToBare() }
                 }
             }

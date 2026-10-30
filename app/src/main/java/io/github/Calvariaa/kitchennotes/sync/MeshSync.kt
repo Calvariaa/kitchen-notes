@@ -64,6 +64,10 @@ class MeshSync(
             // 用户刚改的菜谱「同步了但没出去」
             gitRepo.commitAll(identity, "recipe:sync ${System.currentTimeMillis()}")
             meshRepo.ensureBare(identity)
+            // pushWorkspaceToBare 可能在镜像前先回灌一次（裸仓库里有工作区还没见过的
+            // 提交时必须先合并，否则强制推送会把对端刚送到的数据抹掉）。
+            // 那次合并要用本机身份署名，所以在动仓库之前就写进去。
+            meshRepo.identitySnapshot = identity
             meshRepo.pushWorkspaceToBare()
 
             val targets = peers.all().filter { it.nodeId != selfNodeId && it.address.isNotBlank() }

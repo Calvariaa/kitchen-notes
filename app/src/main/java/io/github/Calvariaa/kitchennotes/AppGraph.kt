@@ -114,6 +114,8 @@ class AppGraph(private val app: Application) {
         runCatching {
             GitLock.mutex.withLock {
                 gitRepo.commitAll(identity, "init: first node")
+                // 镜像前可能先回灌一次，那次合并要用这个身份署名
+                meshRepo.identitySnapshot = identity
                 meshRepo.pushWorkspaceToBare()
             }
         }
