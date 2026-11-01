@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.sync
 
 import android.util.Log
+import io.github.Calvariaa.kitchennotes.diag.DiagLog
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import org.eclipse.jgit.transport.PacketLineOut
 import org.eclipse.jgit.transport.ReceivePack
@@ -57,6 +58,9 @@ internal class MiniGitHandler(
 
     fun handle(call: HttpCall) {
         val sub = call.path.removePrefix(prefix)
+        // 入站请求只在 debug 层面记一行：对端每 5 分钟一轮同步会打两三次，
+        // 记多了反而把真正关心的 merge/push 结果挤出可视范围
+        DiagLog.d(TAG, "${call.method} $sub from ${call.remote}")
         when {
             sub == "/info/refs" -> advertise(call)
             sub == "/git-upload-pack" && call.method == "POST" -> uploadPack(call)
@@ -83,6 +87,7 @@ internal class MiniGitHandler(
             }
         }
 
+        DiagLog.i(TAG, "advertise $kind from ${call.remote}")
         val out = call.streamHeaders(200, "application/x-$kind-advertisement") ?: return
         out.use { body ->
             val repo = runCatching { meshRepo.openBare() }.getOrNull()
@@ -124,7 +129,10 @@ internal class MiniGitHandler(
                     // 进度文本没有 pkt 分帧 → 客户端报 "bad line length character: Tota"。
                     up.upload(call.body.inputStream(), body, null)
                 }
-            }.onFailure { Log.w(TAG, "upload-pack failed", it) }
+            }.onFailure {
+                Log.w(TAG, "upload-pack failed", it)
+                DiagLog.e(TAG, "upload-pack 失败（对端 ${call.remote}）", it)
+            }
             runCatching { body.flush() }
         }
     }
@@ -138,7 +146,13 @@ internal class MiniGitHandler(
                 meshRepo.openBare().use { repo ->
                     val rp = ReceivePack(repo)
                     rp.setBiDirectionalPipe(false)
-                    rp.setPostReceiveHook { _, _ ->
+                    rp.setPostReceiveHook { _, commands ->
+                        DiagLog.i(
+                            TAG,
+                            "收到 push: " + commands.joinToString(";") {
+                                "${it.refName} ${it.oldObjectId?.name()?.take(8)}→${it.newObjectId?.name()?.take(8)}"
+                            },
+                        )
                         // 对端推完，本机工作区要跟上。后台线程做，别阻塞 HTTP 响应。
                         // 必须持 GitLock：此刻 UI 的 commitAndPush / 定时同步很可能
                         // 正在同一个仓库上 add/commit，不串行化就是 index.lock 抢锁，
@@ -148,6 +162,7 @@ internal class MiniGitHandler(
                             // 这条路径以前把仲裁结果整个丢掉，于是「对端 push 触发的那次冲突」
                             // 对用户完全不可见 —— 明明有人的改动被盖了，界面上什么都不说。
                             var report = ConflictReport.NONE
+                            val before = runCatching { meshRepo.bareBranch() }.getOrNull()
                             kotlinx.coroutines.runBlocking {
                                 GitLock.mutex.withLock {
                                     report = runCatching {
@@ -155,12 +170,19 @@ internal class MiniGitHandler(
                                     }.getOrDefault(ConflictReport.NONE)
                                 }
                             }
+                            DiagLog.i(
+                                TAG,
+                                "回灌完成 分支=$before entries=${report.entries.size} unresolved=${report.unresolved}",
+                            )
                             onWorkspacePulled?.invoke(report)
                         }.also { it.isDaemon = true }.start()
                     }
                     rp.receive(call.body.inputStream(), body, null)
                 }
-            }.onFailure { Log.w(TAG, "receive-pack failed", it) }
+            }.onFailure {
+                Log.w(TAG, "receive-pack failed", it)
+                DiagLog.e(TAG, "receive-pack 失败（对端 ${call.remote}）", it)
+            }
             runCatching { body.flush() }
         }
     }

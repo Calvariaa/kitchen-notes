@@ -389,4 +389,27 @@
     <string name="settings_invite_hint">家人用这串码加入。</string>
     <string name="join_self">本机</string>
     <string name="join_no_group">还没加入家庭组</string>
+    <string name="diag_title">终端日志</string>
+    <string name="diag_subtitle">应用做过的每件事，含 git 与同步的每一步。可以复制、存到本地，也可以自己敲一段记录，把操作和日志对上。</string>
+    <string name="diag_open">打开终端日志</string>
+    <string name="diag_filter_hint">筛选日志行（例如 Sync、MeshSync、merge）</string>
+    <string name="diag_refresh">刷新</string>
+    <string name="diag_copy">复制全部</string>
+    <string name="diag_copied">日志已复制</string>
+    <string name="diag_save">保存到本地</string>
+    <string name="diag_saved">已保存到 %1$s</string>
+    <string name="diag_save_failed">保存日志失败</string>
+    <string name="diag_clear">清空日志</string>
+    <string name="diag_cleared">日志已清空</string>
+    <string name="diag_empty">还没有日志。</string>
+    <string name="diag_no_match">没有匹配「%1$s」的行。</string>
+    <string name="diag_lines">%1$d 行</string>
+    <string name="diag_note_title">我的记录</string>
+    <string name="diag_note_hint">刚做了什么（例如：在厨房那台点了一次同步）</string>
+    <string name="diag_note_add">添加记录</string>
+    <string name="diag_note_empty">还没有记录。</string>
+    <string name="diag_note_clear">清空记录</string>
+    <string name="diag_note_added">已添加</string>
+    <string name="diag_show_more">显示更早的 %1$d 行</string>
+    <string name="diag_files_title">已保存的文件</string>
 </resources>

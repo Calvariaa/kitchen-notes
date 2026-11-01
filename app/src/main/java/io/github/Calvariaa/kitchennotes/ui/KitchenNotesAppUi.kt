@@ -27,6 +27,7 @@ import io.github.Calvariaa.kitchennotes.ui.screens.JoinGroupScreen
 import io.github.Calvariaa.kitchennotes.ui.screens.MenuEditorScreen
 import io.github.Calvariaa.kitchennotes.ui.screens.MenuListScreen
 import io.github.Calvariaa.kitchennotes.ui.screens.OnboardingScreen
+import io.github.Calvariaa.kitchennotes.ui.screens.DiagLogScreen
 import io.github.Calvariaa.kitchennotes.ui.screens.RecipeDetailScreen
 import io.github.Calvariaa.kitchennotes.ui.screens.RecipeListScreen
 import io.github.Calvariaa.kitchennotes.ui.screens.SettingsScreen
@@ -45,6 +46,9 @@ object Routes {
     const val DRAFT = "draft"
     const val SETTINGS = "settings"
     const val JOIN = "join"
+
+    /** 终端日志：从设置页钻进去的二级页，自带返回箭头，不显示抽屉 */
+    const val DIAG = "diag"
 
     fun detail(id: String) = "detail/$id"
     fun menuEditor(id: String) = "menu/$id"
@@ -271,7 +275,11 @@ private fun AppNavHost(
         }
 
         composable(Routes.SETTINGS) {
-            SettingsScreen(vm = vm)
+            SettingsScreen(vm = vm, onOpenDiag = { nav.navigate(Routes.DIAG) })
+        }
+
+        composable(Routes.DIAG) {
+            DiagLogScreen(vm = vm, onBack = { nav.popBackStack() })
         }
 
         composable(Routes.JOIN) {

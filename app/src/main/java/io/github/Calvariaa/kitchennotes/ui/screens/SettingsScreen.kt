@@ -99,6 +99,7 @@ import io.github.Calvariaa.kitchennotes.ui.theme.Palette
 @OptIn(ExperimentalMaterial3Api::class)
 fun SettingsScreen(
     vm: DishViewModel,
+    onOpenDiag: () -> Unit = {},
 ) {
     val settings by vm.settings.collectAsState()
     val identity by vm.identity.collectAsState()
@@ -745,10 +746,32 @@ fun SettingsScreen(
             }
 
             // ==================== 诊断 ====================
-            // 崩过一次才出现：没崩过时这一块完全不存在，不占版面也不制造焦虑
+            // 入口常驻：终端日志不是「出事才需要」的东西 —— 用户反馈「同步有问题又说不出
+            // 步骤」时，得先能随手打开它并把里面复制出来，才知道到底发生了什么
+            SectionTitle(stringResource(R.string.settings_section_diagnostics))
+            SoftBox(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        stringResource(R.string.diag_subtitle),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            // 先把最新日志快照一次再跳转：页面自己也会刷新，
+                            // 这一步只是保证跳过去时不会短暂显示上一次的旧内容
+                            vm.refreshDiag(includeSnapshot = true)
+                            onOpenDiag()
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.diag_open)) }
+                }
+            }
+
+            // 崩溃记录：崩过一次才出现，没崩过时不占版面也不制造焦虑
             val crashText = remember(crashVersion) { CrashLog.read(ctx) }
             if (crashText.isNotBlank()) {
-                SectionTitle(stringResource(R.string.settings_section_diagnostics))
                 SoftBox(modifier = Modifier.fillMaxWidth()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(

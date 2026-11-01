@@ -2,6 +2,7 @@ package io.github.Calvariaa.kitchennotes.sync
 
 import android.content.Context
 import android.util.Log
+import io.github.Calvariaa.kitchennotes.diag.DiagLog
 import io.github.Calvariaa.kitchennotes.data.MeshGroup
 import io.github.Calvariaa.kitchennotes.data.Peer
 import io.github.Calvariaa.kitchennotes.data.SettingsStore
@@ -58,6 +59,11 @@ class MeshSync(
         // 全都要碰同一个仓库，和 postReceive 后台回灌、UI 的 commitAndPush 并发
         // 就是 index.lock 抢锁 + 静默失败（坑 38）。锁在整个 syncAll 外层，
         // 而不是每个子步骤各锁一次 —— 否则两个 syncAll 仍会在「我提交到一半」时交错。
+        val startedAt = System.currentTimeMillis()
+        DiagLog.i(
+            TAG,
+            "syncAll 开始 silent=$silent self=${selfNodeId.take(24)} group=${group.name}",
+        )
         GitLock.mutex.withLock {
             gitRepo.ensureInitialized(identity)
             // 先把本地改动落成提交。不然对端 fetch 到的是上一次提交的状态，
@@ -71,7 +77,13 @@ class MeshSync(
             meshRepo.pushWorkspaceToBare()
 
             val targets = peers.all().filter { it.nodeId != selfNodeId && it.address.isNotBlank() }
+            DiagLog.i(
+                TAG,
+                "syncAll 目标 ${targets.size} 个: " +
+                    targets.joinToString(", ") { "${it.name.ifBlank { "?" }}@${it.address}" },
+            )
             if (targets.isEmpty()) {
+                DiagLog.w(TAG, "syncAll 没有可同步的对端（名册为空或地址缺失）")
                 return@withLock SyncResult(parts = listOf(SyncPart.COMMITTED_LOCAL))
             }
 
@@ -91,6 +103,11 @@ class MeshSync(
                         // 「什么都没发生」在 P2P 里是常态，没有日志就分不清
                         // 「对端确实没数据」和「签名被拒/地址写错」
                         Log.w(TAG, "sync with ${peer.address} failed", it)
+                        DiagLog.e(
+                            TAG,
+                            "sync 对端 ${peer.name.ifBlank { peer.nodeId.take(12) }}@${peer.address} 失败",
+                            it,
+                        )
                     }
                     .getOrNull()
                 if (outcome == null) {
@@ -121,6 +138,12 @@ class MeshSync(
                     if (refreshed.isNotEmpty()) peers.mergeRemote(refreshed)
                 }
             }
+
+            DiagLog.i(
+                TAG,
+                "syncAll 结束 用时 ${System.currentTimeMillis() - startedAt}ms " +
+                    "可达=$reachable/$targets.size 拉取=$pulled 冲突=${entries.size}/${unresolved} 推送=$pushedAny",
+            )
 
             // 全部对端都够不着 → 当作「只有本地提交」，别报错：家里可能就自己开着
             if (reachable == 0) {
@@ -158,9 +181,11 @@ class MeshSync(
         peer: Peer,
     ): Outcome? {
         val url = "http://${peer.address}/node.git"
+        val peerLabel = peer.name.ifBlank { peer.nodeId.take(12) }
         Git.open(gitRepo.repoDir()).use { git ->
             val branch = git.repository.branch ?: Constants.MASTER
             val before = git.repository.resolve(Constants.HEAD)
+            DiagLog.i(TAG, "[$peerLabel] fetch $url branch=$branch before=${before?.name()?.take(8) ?: "<空>"}")
 
             git.fetch()
                 .setRemote(url)
@@ -170,7 +195,11 @@ class MeshSync(
                 .call()
 
             val remoteRev = git.repository.resolve("refs/remotes/${refPrefix(peer)}/$branch")
-                ?: return Outcome(0, ConflictReport.NONE, false)
+            if (remoteRev == null) {
+                DiagLog.w(TAG, "[$peerLabel] fetch 成功但没有 refs/heads/$branch（对端仓库为空？）")
+                return Outcome(0, ConflictReport.NONE, false)
+            }
+            DiagLog.i(TAG, "[$peerLabel] fetch 完毕 remote=${remoteRev.name.take(8)}")
 
             var report = ConflictReport.NONE
             var pulled = 0
@@ -187,6 +216,7 @@ class MeshSync(
                     }
                 }.getOrDefault(0)
 
+                var mergeError: Throwable? = null
                 val merge = runCatching {
                     git.merge()
                         .include(remoteRev)
@@ -198,9 +228,13 @@ class MeshSync(
                         .setCommit(true)
                         .setMessage("merge: peer ${peer.name.ifBlank { peer.nodeId.take(12) }}")
                         .call()
-                }.getOrNull()
+                }.onFailure { mergeError = it }.getOrNull()
 
                 val mergedCleanly = merge != null && merge.mergeStatus.isSuccessful
+                val mergeLine = "[$peerLabel] merge 对方领先=$aheadOfMe 干净=$mergedCleanly " +
+                    "status=${merge?.mergeStatus?.name ?: "null"}"
+                val mergeFailure = mergeError
+                if (mergeFailure != null) DiagLog.w(TAG, mergeLine, mergeFailure) else DiagLog.i(TAG, mergeLine)
                 if (!mergedCleanly) {
                     // 冲突交给按「字段级三方合并」仲裁。仲裁后**必须**提交收尾，
                     // 否则工作区停在 MERGING，之后所有 commit 都抛
@@ -208,6 +242,11 @@ class MeshSync(
                     // 显式传 before / remoteRev：JGit 在 CheckoutConflictException
                     // 路径上不写 MERGE_HEAD，靠它取 base 必然拿不到（坑 42）
                     report = gitRepo.resolveConflictsKeepingNewest(before, remoteRev)
+                    DiagLog.w(
+                        TAG,
+                        "[$peerLabel] 冲突仲裁 entries=${report.entries.size} unresolved=${report.unresolved} " +
+                            report.entries.joinToString(";") { "${it.kind}/${it.id.take(8)} fields=${it.fields}" },
+                    )
                     // commitAll 自带「有冲突标记就拒绝提交」，所以解不掉的冲突
                     // 不会再被写进提交、也不会推给对端（坑 40）
                     gitRepo.commitAll(identity, "merge: resolve ${report.entries.size} by newest")
@@ -226,6 +265,16 @@ class MeshSync(
                     .setTransportConfigCallback(authCallback(identity, group))
                     .call()
                 pushed = result.any { it.remoteUpdates.isNotEmpty() }
+                DiagLog.i(
+                    TAG,
+                    "[$peerLabel] push head=${head.name.take(8)} remote=${remoteRev.name.take(8)} 结果=" +
+                        result.joinToString(";") { u ->
+                            val a = u.remoteUpdates.firstOrNull()
+                            "${a?.remoteName ?: "?"} ${a?.status ?: "?"} ${a?.messages?.joinToString(" ").orEmpty()}"
+                        },
+                )
+            } else {
+                DiagLog.i(TAG, "[$peerLabel] 无需 push（HEAD 与对端一致 ${head.name.take(8)}）")
             }
 
             // 推完把本地最新状态镜像到本机裸仓库，

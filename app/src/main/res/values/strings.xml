@@ -393,4 +393,28 @@
     <string name="detail_history_count">%1$d times</string>
     <string name="detail_history_empty">Not cooked yet — it will show up here once it lands on a menu.</string>
     <string name="menu_date_today">Today</string>
+    <!-- ===== Terminal log (settings → diagnostics) ===== -->
+    <string name="diag_title">Terminal log</string>
+    <string name="diag_subtitle">Everything the app did, plus git and sync steps. Copy it or save it, and type your own notes so an action and its log line up.</string>
+    <string name="diag_open">Open terminal log</string>
+    <string name="diag_filter_hint">Filter lines (e.g. Sync, MeshSync, merge)</string>
+    <string name="diag_refresh">Refresh</string>
+    <string name="diag_copy">Copy all</string>
+    <string name="diag_copied">Log copied</string>
+    <string name="diag_save">Save locally</string>
+    <string name="diag_saved">Saved to %1$s</string>
+    <string name="diag_save_failed">Could not save the log</string>
+    <string name="diag_clear">Clear log</string>
+    <string name="diag_cleared">Log cleared</string>
+    <string name="diag_empty">No log lines yet.</string>
+    <string name="diag_no_match">No line matches “%1$s”.</string>
+    <string name="diag_lines">%1$d lines</string>
+    <string name="diag_note_title">Your notes</string>
+    <string name="diag_note_hint">What you just did (e.g. tapped sync on the kitchen phone)</string>
+    <string name="diag_note_add">Add note</string>
+    <string name="diag_note_empty">No notes yet.</string>
+    <string name="diag_note_clear">Clear notes</string>
+    <string name="diag_note_added">Note added</string>
+    <string name="diag_show_more">Show more (%1$d older lines)</string>
+    <string name="diag_files_title">Saved files</string>
 </resources>
