@@ -150,7 +150,9 @@ internal class MiniGitHandler(
                         DiagLog.i(
                             TAG,
                             "收到 push: " + commands.joinToString(";") {
-                                "${it.refName} ${it.oldObjectId?.name()?.take(8)}→${it.newObjectId?.name()?.take(8)}"
+                                // JGit 6.5 的 ReceiveCommand 用 getter 而不是属性名：
+                                // Kotlin 对非 JavaBean 命名的 getter 不做属性提升
+                                "${it.refName} ${it.getOldId()?.name()?.take(8)}→${it.getNewId()?.name()?.take(8)}"
                             },
                         )
                         // 对端推完，本机工作区要跟上。后台线程做，别阻塞 HTTP 响应。

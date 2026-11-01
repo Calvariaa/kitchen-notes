@@ -270,7 +270,7 @@ class MeshSync(
                     "[$peerLabel] push head=${head.name.take(8)} remote=${remoteRev.name.take(8)} 结果=" +
                         result.joinToString(";") { u ->
                             val a = u.remoteUpdates.firstOrNull()
-                            "${a?.remoteName ?: "?"} ${a?.status ?: "?"} ${a?.messages?.joinToString(" ").orEmpty()}"
+                            "${a?.remoteName ?: "?"} ${a?.status ?: "?"}"
                         },
                 )
             } else {

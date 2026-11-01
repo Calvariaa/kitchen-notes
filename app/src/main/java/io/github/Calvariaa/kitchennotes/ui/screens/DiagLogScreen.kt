@@ -90,6 +90,9 @@ fun DiagLogScreen(
     val notes by vm.diagNotes.collectAsState()
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
+    // 在组合作用域里先取一次资源：后面在点击回调（非 @Composable 上下文）里也要用
+    val copyLabel = stringResource(R.string.diag_copy)
+    val emptyLabel = stringResource(R.string.diag_empty)
 
     var filter by rememberSaveable { mutableStateOf("") }
     var noteDraft by rememberSaveable { mutableStateOf("") }
@@ -154,14 +157,14 @@ fun DiagLogScreen(
                         onClick = {
                             // 复制的是**完整**文本（含环境报告），不是屏幕上筛选后的部分：
                             // 排障要的是全量证据，筛选只是自己看
-                            val payload = text.ifBlank { stringResource(R.string.diag_empty) }
+                            val payload = text.ifBlank { emptyLabel }
                             clipboard.setText(AnnotatedString(payload))
                             Toast.makeText(ctx, R.string.diag_copied, Toast.LENGTH_SHORT).show()
                         },
                     ) {
                         Icon(
                             Icons.Filled.ContentCopy,
-                            contentDescription = stringResource(R.string.diag_copy),
+                            contentDescription = copyLabel,
                         )
                     }
                 },
