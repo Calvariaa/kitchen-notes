@@ -2,6 +2,7 @@ package io.github.Calvariaa.kitchennotes.sync
 
 import android.content.Context
 import android.util.Log
+import io.github.Calvariaa.kitchennotes.diag.DiagLog
 import io.github.Calvariaa.kitchennotes.data.MeshGroup
 import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.SettingsStore
@@ -126,6 +127,7 @@ class MeshServer(
         }.exceptionOrNull()
         if (repoError != null) {
             Log.w(TAG, "prepare bare repo failed", repoError)
+            DiagLog.e(TAG, "节点服务启动失败：裸仓库准备失败", repoError)
             lastError = SyncError(
                 SyncError.Kind.REPO_UNAVAILABLE,
                 "${repoError.javaClass.simpleName}: ${repoError.message ?: ""}",
@@ -222,9 +224,17 @@ class MeshServer(
             running = true
             lastError = null
             Log.i(TAG, "mesh node listening on $port")
+            // 「服务到底起来没有」是排查同步问题的第一个分叉：
+            // 没起来就轮不到别的设备连上我
+            DiagLog.i(
+                TAG,
+                "节点服务已启动 port=$port 地址=${addresses().joinToString(",").ifBlank { "<无网卡地址>" }} " +
+                    "group=${group.name}",
+            )
         } catch (t: Throwable) {
             // 端口占用最常见。绝不能让异常逃到 viewModelScope —— 那会整个进程崩掉（坑 15）
             Log.w(TAG, "start failed", t)
+            DiagLog.e(TAG, "节点服务启动失败 port=$port hint=${bindHint(t)}", t)
             lastError = if (t is java.net.BindException) {
                 // BindException 在 Android 上 message 常常是 null（libcore 的
                 // IoBridge 只填 errno，不填文案），直接拼出来就是「端口 7411
@@ -322,6 +332,7 @@ class MeshServer(
     }.getOrDefault("")
 
     suspend fun stop() = withContext(Dispatchers.IO) {
+        DiagLog.i(TAG, "节点服务停止")
         runCatching { server?.stop() }
         server = null
         running = false

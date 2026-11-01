@@ -2,6 +2,7 @@ package io.github.Calvariaa.kitchennotes.sync
 
 import android.content.Context
 import android.util.Log
+import io.github.Calvariaa.kitchennotes.diag.DiagLog
 import io.github.Calvariaa.kitchennotes.data.Paths
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import kotlinx.coroutines.Dispatchers
@@ -169,6 +170,12 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
                 } }.getOrNull()
                 if (bareHead != null && !isAncestor(git, bareHead, head)) {
                     Log.i(TAG, "node.git has commits not in workspace, pulling first")
+                    // 这一步是坑 46 的核心：不先回灌就强推，会把对端刚送达的数据抹掉。
+                    // 日志里必须看得到它发生了，否则「数据凭空消失」又无从查证
+                    DiagLog.w(
+                        TAG,
+                        "镜像前回灌: node.git=${bareHead.name.take(8)} 不是工作区 ${head.name.take(8)} 的祖先",
+                    )
                     pullBareIntoWorkspace(identitySnapshot)
                     head = git.repository.resolve("refs/heads/$branch") ?: return@use
 
@@ -184,6 +191,7 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
                             "skip mirror: node.git still ahead of workspace after pull; " +
                                 "refusing to overwrite it (would drop peer data)",
                         )
+                        DiagLog.e(TAG, "放弃镜像：回灌后裸仓库仍领先工作区，覆盖会丢对端数据")
                         return@use
                     }
                 }
@@ -196,8 +204,12 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
                     .setRefSpecs(RefSpec("+refs/heads/$branch:refs/heads/$branch"))
                     .call()
                 Log.i(TAG, "mirrored $branch@${head.name.take(7)} to node.git")
+                DiagLog.d(TAG, "镜像 $branch@${head.name.take(8)} → node.git")
             }
-        }.onFailure { Log.w(TAG, "pushWorkspaceToBare failed", it) }
+        }.onFailure {
+            Log.w(TAG, "pushWorkspaceToBare failed", it)
+            DiagLog.e(TAG, "镜像到 node.git 失败", it)
+        }
     }
 
     /**
@@ -276,6 +288,11 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
                     // 显式传 before / target：JGit 在 CheckoutConflictException 路径上
                     // 不写 MERGE_HEAD，靠它取 base 必然拿不到（坑 42）
                     report = gitRepo.resolveConflictsKeepingNewest(before, target)
+                    DiagLog.w(
+                        TAG,
+                        "回灌冲突 仲裁 entries=${report.entries.size} unresolved=${report.unresolved} " +
+                            report.entries.joinToString(";") { "${it.kind}/${it.id.take(8)} fields=${it.fields}" },
+                    )
                 }
                 // 仲裁后（或合并成功但工作区有遗留改动）才提交；没有变化就不提交。
                 // commitAll 自己会判空，而且带「有冲突标记就拒绝提交」的保护。
@@ -284,6 +301,9 @@ class MeshRepo(private val ctx: Context, private val gitRepo: GitRepo) {
             }
         }.getOrElse {
             Log.w(TAG, "pullBareIntoWorkspace failed", it)
+            // 这条异常原本完全不可见（调用方 runCatching 掉），而它正是「对端推了、
+            // 我却没刷新」的唯一线索
+            DiagLog.e(TAG, "回灌工作区失败", it)
             ConflictReport.NONE
         }
     }

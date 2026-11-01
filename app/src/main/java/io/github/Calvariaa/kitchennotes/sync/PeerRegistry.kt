@@ -1,6 +1,7 @@
 package io.github.Calvariaa.kitchennotes.sync
 
 import android.util.Log
+import io.github.Calvariaa.kitchennotes.diag.DiagLog
 import io.github.Calvariaa.kitchennotes.data.Peer
 import io.github.Calvariaa.kitchennotes.data.SettingsStore
 import kotlinx.coroutines.Dispatchers
@@ -157,25 +158,62 @@ internal class MeshGuard(
      *   这里**不写响应**：git 端点的错误格式和 JSON 端点不同，交给调用方决定。
      */
     fun authorize(call: HttpCall): Peer? {
-        val header = call.header("Authorization") ?: return null
+        // 每一处拒绝都要有原因，而且必须落进诊断日志：
+        // 「对端说同步失败、我这边什么都没收到」时，唯一能区分
+        // 「没连上」「签名不对」「不在名册」「时钟差太多」「重放」的证据就在这里。
+        // 这几种失败在 HTTP 上都只是 403，光看状态码完全分不清。
+        val header = call.header("Authorization") ?: run {
+            DiagLog.w(TAG, "拒绝 ${call.method} ${call.path} from ${call.remote}: 没有 Authorization 头")
+            return null
+        }
         val parts = header.trim().split(' ')
-        if (parts.size != 5 || parts[0] != "Kn1") return null
+        if (parts.size != 5 || parts[0] != "Kn1") {
+            DiagLog.w(TAG, "拒绝 ${call.method} ${call.path} from ${call.remote}: 头格式不是 Kn1")
+            return null
+        }
         val nodeId = parts[1]
-        val timeMs = parts[2].toLongOrNull() ?: return null
+        val timeMs = parts[2].toLongOrNull() ?: run {
+            DiagLog.w(TAG, "拒绝 ${call.method} ${call.path} from ${call.remote}: 时间戳不是数字")
+            return null
+        }
         val nonce = parts[3]
         val sig = parts[4]
 
         val now = System.currentTimeMillis()
-        if (kotlin.math.abs(now - timeMs) > MeshCrypto.MAX_SKEW_MS) return null
+        if (kotlin.math.abs(now - timeMs) > MeshCrypto.MAX_SKEW_MS) {
+            // 两台设备时钟差超过 5 分钟就必然连不上，而两台手机很少有人校时
+            DiagLog.w(
+                TAG,
+                "拒绝 ${call.method} ${call.path}: 时钟偏差 ${(now - timeMs) / 1000}s 超过 ${MeshCrypto.MAX_SKEW_MS / 1000}s " +
+                    "（node=${nodeId.take(24)} 对端时间=$timeMs）",
+            )
+            return null
+        }
 
-        val peer = peers.find(nodeId) ?: return null
-        if (peer.publicKey.isBlank()) return null
+        val peer = peers.find(nodeId) ?: run {
+            DiagLog.w(
+                TAG,
+                "拒绝 ${call.method} ${call.path} from ${call.remote}: 名册里没有 node=${nodeId.take(24)}",
+            )
+            return null
+        }
+        if (peer.publicKey.isBlank()) {
+            DiagLog.w(TAG, "拒绝 ${call.method} ${call.path}: 名册项 ${nodeId.take(24)} 公钥为空")
+            return null
+        }
 
         // git 的三个端点共用作用域 "git"：JGit 一次 fetch 会自己连发 info/refs 和
         // upload-pack 两个请求，客户端代码拿不到后者的具体路径，无法逐条签名。
         val isGit = call.path.startsWith("/node.git")
         val scope = if (isGit) "git" else call.path
-        if (!MeshCrypto.verify(peer.publicKey, scope, timeMs, nonce, sig)) return null
+        if (!MeshCrypto.verify(peer.publicKey, scope, timeMs, nonce, sig)) {
+            DiagLog.w(
+                TAG,
+                "拒绝 ${call.method} ${call.path} from ${call.remote}: 验签失败 " +
+                    "(peer=${peer.name.ifBlank { nodeId.take(12) }} scope=$scope)",
+            )
+            return null
+        }
 
         // **nonce 的复用粒度是「同一种请求」，不是「整个会话」**。
         //
@@ -196,20 +234,40 @@ internal class MeshGuard(
             call.path.endsWith("/git-receive-pack") -> "git-receive-pack"
             else -> "git-other"
         }
-        if (!claimNonce("$nonce|${call.method}|$pathClass", now)) return null
+        if (!claimNonce("$nonce|${call.method}|$pathClass", now)) {
+            DiagLog.w(TAG, "拒绝 ${call.method} ${call.path}: nonce 重放")
+            return null
+        }
 
         return peer
     }
 
+    companion object {
+        private const val TAG = "MeshGuard"
+    }
+
     fun noteSeen(peer: Peer, remote: String, port: Int) {
         if (remote.isBlank() || remote == "0.0.0.0") return
+        // 回环来源不能写进名册（坑 30）：写进去之后所有同步都往自己身上打。
+        // 这里以前只靠调用方传的 remote 兜，但 adb forward / 本机自连时
+        // remote 就是 127.0.0.1，会把对端真实地址覆盖掉 —— 必须在源头拦
+        if (remote.startsWith("127.") || remote == "::1") return
+        val previous = peers.find(peer.nodeId)?.address
         peers.touch(peer.nodeId, "$remote:$port")
+        if (previous != "$remote:$port") {
+            DiagLog.i(TAG, "对端 ${peer.name.ifBlank { peer.nodeId.take(12) }} 地址 $previous → $remote:$port")
+        }
     }
 
     fun addPeer(req: JoinRequest, remote: String, port: Int) {
         // 回环来源（adb forward / 本机自连）拿不到对端真实位置，宁可留空，
         // 让后续扫描或对端主动连入时再补，也不要把 127.0.0.1 写进名册
         val usableRemote = !remote.isBlank() && remote != "0.0.0.0" && !remote.startsWith("127.")
+        DiagLog.i(
+            TAG,
+            "新增名册项 node=${req.nodeId.take(24)} name=${req.name} remote=$remote port=${req.port}" +
+                (if (usableRemote) "" else "（回环来源，地址留空）"),
+        )
         peers.upsertBlocking(
             Peer(
                 nodeId = req.nodeId,

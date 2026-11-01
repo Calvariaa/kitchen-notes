@@ -30,6 +30,8 @@ import io.github.Calvariaa.kitchennotes.data.RecipeSort
 import io.github.Calvariaa.kitchennotes.data.Staple
 import io.github.Calvariaa.kitchennotes.data.UserIdentity
 import io.github.Calvariaa.kitchennotes.data.sharedJson
+import io.github.Calvariaa.kitchennotes.diag.DebugSnapshot
+import io.github.Calvariaa.kitchennotes.diag.DiagLog
 import io.github.Calvariaa.kitchennotes.sync.ConflictReport
 import io.github.Calvariaa.kitchennotes.sync.DiscoveredNode
 import io.github.Calvariaa.kitchennotes.sync.GitLock
@@ -1069,9 +1071,11 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
         if (_syncing.value) return
         viewModelScope.launch {
             _syncing.value = true
+            DiagLog.i("Sync", "手动/定时同步开始 silent=$silent")
             if (!silent) _syncMessage.value = UiText.of(R.string.sync_in_progress)
             try {
                 val result = withContext(Dispatchers.IO) { app.sync(silent) }
+                DiagLog.i("Sync", "同步完成 parts=${result.parts} pulled=${result.pulledCommits} conflicts=${result.conflictsResolved}")
                 // 同步可能把对端的提交合并进工作区，必须重新读盘
                 reload()
                 refreshPeers()
@@ -1085,8 +1089,10 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
                 if (result.conflictReport.needsAttention) _conflictToShow.value = result.conflictReport
             } catch (e: SyncError) {
                 // 静默时网络错误不打扰用户（比如这会儿不在同一个 WiFi 下）
+                DiagLog.w("Sync", "同步失败 kind=${e.kind} detail=${e.detail} hint=${e.hint}")
                 if (!silent) _syncMessage.value = e.toUiText()
             } catch (t: Throwable) {
+                DiagLog.e("Sync", "同步异常", t)
                 if (!silent) _syncMessage.value = UiText.of(R.string.sync_failed, t.message.orEmpty())
             } finally {
                 _syncing.value = false
@@ -1139,6 +1145,7 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     fun regenerateSshKey() {
         viewModelScope.launch {
             val current = _identity.value ?: return@launch
+            DiagLog.w("Identity", "重新生成 SSH 节点密钥：nodeId 会变，家人要重新认识这台设备")
             val (priv, pub) = withContext(Dispatchers.Default) {
                 SshKeyFactory.generateKeyPair(current.email)
             }
@@ -1171,6 +1178,104 @@ class DishViewModel(private val app: AppGraph) : ViewModel() {
     }
 
     fun repoPath(): String = Paths.repo(app.baseContext).absolutePath
+
+    // ---------------------------------------------------------------- 诊断日志
+
+    /**
+     * 「终端日志」页面的正文快照。
+     *
+     * 为什么不直接暴露 [DiagLog] 给 UI 读：日志是每秒都会追加的文件，
+     * 直接 read 会让重组变成磁盘 IO。这里由 ViewModel 在**需要时**快照一次
+     * （进页面、刷新、复制、导出），UI 只渲染这份字符串。
+     */
+    private val _diagText = MutableStateFlow("")
+    val diagText: StateFlow<String> = _diagText.asStateFlow()
+
+    /** 用户自己敲的标记（单独一块，清屏不会删掉它们） */
+    private val _diagNotes = MutableStateFlow<List<String>>(emptyList())
+    val diagNotes: StateFlow<List<String>> = _diagNotes.asStateFlow()
+
+    /** 上一次「保存到本地」的结果，用一个自增计数触发 Toast，避免重复提示 */
+    var diagSavedTick by mutableStateOf(0)
+        private set
+    var diagSavedPath by mutableStateOf("")
+        private set
+
+    /**
+     * 重新快照一次日志 + 环境报告。
+     *
+     * @param includeSnapshot 是否把 [DebugSnapshot] 的报告接在最前面。
+     *   环境报告要开 git 仓库、枚举网卡，比读日志贵得多，所以只有
+     *   「进页面 / 用户点刷新 / 复制 / 导出」时才带
+     */
+    fun refreshDiag(includeSnapshot: Boolean = true) {
+        viewModelScope.launch {
+            val ctx = app.baseContext
+            val text = withContext(Dispatchers.IO) {
+                buildString {
+                    if (includeSnapshot) {
+                        append(runCatching { DebugSnapshot.build(ctx, app) }.getOrElse {
+                            "===== 诊断报告生成失败 =====\n${it.javaClass.simpleName}: ${it.message}\n\n"
+                        })
+                        append("\n===== 运行日志 =====\n")
+                    }
+                    append(DiagLog.read(ctx))
+                }
+            }
+            _diagText.value = text
+            _diagNotes.value = withContext(Dispatchers.IO) { DiagLog.readNotes(ctx) }
+        }
+    }
+
+    /** 用户输入的标记。同时进总日志，导出时能对上时间顺序 */
+    fun addDiagNote(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { DiagLog.appendNote(app.baseContext, clean) }
+            refreshDiag(includeSnapshot = false)
+        }
+    }
+
+    fun clearDiagNotes() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { DiagLog.clearNotes(app.baseContext) }
+            refreshDiag(includeSnapshot = false)
+        }
+    }
+
+    /** 清空自动日志（用户标记保留，那是他自己写的东西） */
+    fun clearDiag() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { DiagLog.clear(app.baseContext) }
+            refreshDiag(includeSnapshot = true)
+        }
+    }
+
+    /**
+     * 把当前快照写到 `files/store/logs/`，返回路径。
+     *
+     * 用户要「记录在本地」，而 Android 上没有共享的外部存储目录能随便写，
+     * 所以落在 App 私有目录并给出真实路径；复制到剪贴板是另一条出口
+     * （用户可以直接粘到聊天窗口发给我）。
+     */
+    fun saveDiagToFile(): String {
+        val text = _diagText.value
+        if (text.isBlank()) return ""
+        val ctx = app.baseContext
+        val dir = File(Paths.root(ctx), "logs").apply { mkdirs() }
+        val name = "diag-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date()) + ".txt"
+        val f = File(dir, name)
+        return runCatching {
+            f.writeText(text)
+            // 同时打一行进日志：下次导出能看到「上次导出是什么时候」
+            DiagLog.i("Diag", "导出日志 ${f.absolutePath} (${text.length} 字符)")
+            diagSavedPath = f.absolutePath
+            diagSavedTick++
+            f.absolutePath
+        }.getOrDefault("")
+    }
 
     class Factory(private val app: AppGraph) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
